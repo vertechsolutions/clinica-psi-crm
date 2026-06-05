@@ -12,9 +12,10 @@ export interface Psicologa {
   nome: string;
   sexo: Sexo;
   especialidade: string;
-  cor: string; // hex do avatar
+  cor: string; // hex do avatar (fallback)
   iniciais: string;
-  agenda: Slot[]; // horários livres
+  foto?: string; // URL da foto (com fallback pras iniciais)
+  agenda: Slot[];
 }
 
 export interface Paciente {
@@ -23,7 +24,7 @@ export interface Paciente {
   origem: 'WhatsApp';
   preferencia: Preferencia;
   modalidade: Modalidade;
-  resumo: string; // resumo da triagem
+  resumo: string;
   psicologaId: string | null;
   agendamentoIso: string | null;
 }

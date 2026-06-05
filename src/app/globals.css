@@ -1,37 +1,50 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #f1f5f9;
+  --color-bg: #eef2f7;
   --color-surface: #ffffff;
-  --color-surface-2: #f8fafc;
+  --color-surface-2: #f7fafc;
   --color-navy: #0f172a;
   --color-navy-2: #1e293b;
   --color-cyan: #22d3ee;
   --color-cyan-dark: #0891b2;
   --color-ink: #1e293b;
   --color-ink-muted: #64748b;
-  --color-line: #e2e8f0;
-  --color-pink: #ec4899;
-  --color-blue: #3b82f6;
+  --color-line: #e6edf4;
+  --color-pink: #db2777;
+  --color-blue: #2563eb;
 }
 
 body {
-  background: var(--color-bg);
+  background:
+    radial-gradient(1100px 520px at 82% -12%, rgba(34, 211, 238, 0.12), transparent 70%),
+    radial-gradient(900px 480px at -5% 110%, rgba(8, 145, 178, 0.08), transparent 70%),
+    var(--color-bg);
+  background-attachment: fixed;
   color: var(--color-ink);
   font-family: var(--font-body), system-ui, sans-serif;
 }
 
-/* anima sem Motion initial (evita tela preta no SSR) */
+/* animações CSS (evitam tela preta no SSR) */
 @keyframes popIn {
-  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
-.pop-in { animation: popIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.pop-in { animation: popIn 200ms cubic-bezier(0.22, 1, 0.36, 1) both; }
 
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-.fade-in { animation: fadeIn 160ms ease both; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.fade-in { animation: fadeIn 200ms ease both; }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
+@keyframes laneIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.lane-in { animation: laneIn 380ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+.pulse-dot { animation: pulseDot 1.8s ease-in-out infinite; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(8, 145, 178, 0.35); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(8, 145, 178, 0.6); }
+::-webkit-scrollbar-thumb { background: rgba(8, 145, 178, 0.3); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(8, 145, 178, 0.55); background-clip: padding-box; }

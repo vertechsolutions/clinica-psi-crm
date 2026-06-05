@@ -1,43 +1,44 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI, type Content } from '@google/genai';
 
 export const runtime = 'nodejs';
 
-const MODEL = process.env.ASSISTANT_MODEL || 'claude-opus-4-8';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 interface ChatBody {
   system: string;
-  messages: Anthropic.MessageParam[];
+  messages: { role: 'user' | 'assistant'; content: string }[];
 }
 
 export async function POST(req: Request) {
   try {
-    const key = process.env.ANTHROPIC_API_KEY;
+    const key = process.env.GEMINI_API_KEY;
     if (!key) {
       return Response.json(
-        { error: 'ANTHROPIC_API_KEY não configurada. Defina em .env.local (dev) ou no Vercel (prod).' },
+        { error: 'GEMINI_API_KEY não configurada. Defina em .env.local (dev) ou no Vercel (prod).' },
         { status: 500 },
       );
     }
 
     const { system, messages } = (await req.json()) as ChatBody;
-    const client = new Anthropic({ apiKey: key });
+    const ai = new GoogleGenAI({ apiKey: key });
 
-    const resp = await client.messages.create({
+    const contents: Content[] = messages.map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+    const resp = await ai.models.generateContent({
       model: MODEL,
-      max_tokens: 1024,
-      thinking: { type: 'adaptive' },
-      system,
-      messages,
+      contents,
+      config: { systemInstruction: system, thinkingConfig: { thinkingBudget: 0 } },
     });
 
-    const text = resp.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
-
-    return Response.json({ text });
+    return Response.json({ text: resp.text ?? '' });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'erro desconhecido';
-    return Response.json({ error: msg }, { status: 500 });
+    const friendly = /429|RESOURCE_EXHAUSTED|quota/i.test(msg)
+      ? 'Limite do plano grátis do Gemini atingido. Espera um pouco e tenta de novo.'
+      : msg;
+    return Response.json({ error: friendly }, { status: 500 });
   }
 }

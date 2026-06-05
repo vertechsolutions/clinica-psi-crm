@@ -3,13 +3,16 @@ import { useDroppable } from '@dnd-kit/core';
 import type { Psicologa, Paciente } from '@/types';
 import { isPassado } from '@/lib/datetime';
 import { PatientCard } from './patient-card';
+import { Avatar } from '../avatar';
 
 export function Swimlane({
   psicologa,
   pacientes,
+  index = 0,
 }: {
   psicologa: Psicologa;
   pacientes: Paciente[];
+  index?: number;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: psicologa.id });
   const cards = pacientes
@@ -17,31 +20,26 @@ export function Swimlane({
     .sort((a, b) => (a.agendamentoIso ?? '').localeCompare(b.agendamentoIso ?? ''));
 
   return (
-    <div className="flex border-b border-line">
-      <div className="flex w-44 shrink-0 items-center gap-2 border-r border-line bg-surface-2 p-3 md:w-48">
-        <div
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-          style={{ background: psicologa.cor }}
-        >
-          {psicologa.iniciais}
-        </div>
+    <div className="lane-in flex border-b border-line" style={{ animationDelay: `${index * 45}ms` }}>
+      <div className="flex w-52 shrink-0 items-center gap-3 border-r border-line bg-gradient-to-b from-surface-2 to-surface p-4">
+        <Avatar src={psicologa.foto} iniciais={psicologa.iniciais} cor={psicologa.cor} size={44} />
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-navy">{psicologa.nome}</div>
           <div className="truncate text-[11px] text-ink-muted">{psicologa.especialidade}</div>
         </div>
-        <span className="ml-auto rounded-full bg-navy/5 px-1.5 text-[11px] text-ink-muted">
+        <span className="ml-auto flex h-6 min-w-6 items-center justify-center rounded-full bg-navy/5 px-1.5 text-[11px] font-medium text-ink-muted">
           {cards.length}
         </span>
       </div>
       <div
         ref={setNodeRef}
-        className={`flex min-h-[84px] flex-1 items-center gap-3 overflow-x-auto p-3 transition-colors ${
-          isOver ? 'bg-cyan/10' : 'bg-surface'
+        className={`flex min-h-[112px] flex-1 items-center gap-3 overflow-x-auto p-4 transition-all ${
+          isOver ? 'bg-cyan/5 ring-2 ring-inset ring-cyan-dark/40' : 'bg-surface'
         }`}
       >
         {cards.length === 0 && (
           <span className="text-xs text-ink-muted/60">
-            {isOver ? 'Solte aqui para agendar…' : 'Sem pacientes'}
+            {isOver ? '✓ solte aqui pra agendar' : 'sem pacientes'}
           </span>
         )}
         {cards.map((c) => (
