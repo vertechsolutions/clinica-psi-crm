@@ -1,26 +1,37 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@theme {
+  --color-bg: #f1f5f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f8fafc;
+  --color-navy: #0f172a;
+  --color-navy-2: #1e293b;
+  --color-cyan: #22d3ee;
+  --color-cyan-dark: #0891b2;
+  --color-ink: #1e293b;
+  --color-ink-muted: #64748b;
+  --color-line: #e2e8f0;
+  --color-pink: #ec4899;
+  --color-blue: #3b82f6;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-body), system-ui, sans-serif;
 }
+
+/* anima sem Motion initial (evita tela preta no SSR) */
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.pop-in { animation: popIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.fade-in { animation: fadeIn 160ms ease both; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(8, 145, 178, 0.35); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(8, 145, 178, 0.6); }
