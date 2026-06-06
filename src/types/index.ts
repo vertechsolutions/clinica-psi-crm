@@ -27,4 +27,10 @@ export interface Paciente {
   resumo: string;
   psicologaId: string | null;
   agendamentoIso: string | null;
+  /** false enquanto o cliente não pagou (card fica vermelho + tag "não pago") */
+  pago: boolean;
+  /** sessões por semana quando modalidade === 'pacote' */
+  frequenciaSemanal?: number;
+  /** liga os cards-sessão gerados a partir de um mesmo pacote */
+  grupoId?: string;
 }

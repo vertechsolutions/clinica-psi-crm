@@ -42,12 +42,12 @@ export function buildPsicologas(): Psicologa[] {
 
 export function buildPacientes(): Paciente[] {
   return [
-    { id: 'c1', nome: 'Mariana S.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', resumo: 'Ansiedade no trabalho, quer pacote mensal. Prefere mulher.', psicologaId: null, agendamentoIso: null },
-    { id: 'c2', nome: 'João P.', origem: 'WhatsApp', preferencia: 'indiferente', modalidade: 'avulso', resumo: 'Sessão avulsa pra experimentar. Sem preferência.', psicologaId: null, agendamentoIso: null },
-    { id: 'c3', nome: 'Rafaela M.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', resumo: 'Luto recente. Quer começar essa semana.', psicologaId: null, agendamentoIso: null },
-    { id: 'c4', nome: 'Lucas D.', origem: 'WhatsApp', preferencia: 'M', modalidade: 'avulso', resumo: 'Quer psicólogo homem, tema carreira.', psicologaId: null, agendamentoIso: null },
-    { id: 'c5', nome: 'Beatriz F.', origem: 'WhatsApp', preferencia: 'indiferente', modalidade: 'pacote', resumo: 'Pânico, urgência média.', psicologaId: null, agendamentoIso: null },
-    { id: 'c6', nome: 'Carla T.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', resumo: 'Em acompanhamento.', psicologaId: 'p1', agendamentoIso: null },
-    { id: 'c7', nome: 'Diego R.', origem: 'WhatsApp', preferencia: 'M', modalidade: 'avulso', resumo: 'Retorno.', psicologaId: 'p3', agendamentoIso: null },
+    { id: 'c1', nome: 'Mariana S.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', frequenciaSemanal: 2, resumo: 'Ansiedade no trabalho, quer pacote mensal. Prefere mulher.', psicologaId: null, agendamentoIso: null, pago: true },
+    { id: 'c2', nome: 'João P.', origem: 'WhatsApp', preferencia: 'indiferente', modalidade: 'avulso', resumo: 'Sessão avulsa pra experimentar. Sem preferência.', psicologaId: null, agendamentoIso: null, pago: false },
+    { id: 'c3', nome: 'Rafaela M.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', frequenciaSemanal: 1, resumo: 'Luto recente. Quer começar essa semana.', psicologaId: null, agendamentoIso: null, pago: true },
+    { id: 'c4', nome: 'Lucas D.', origem: 'WhatsApp', preferencia: 'M', modalidade: 'avulso', resumo: 'Quer psicólogo homem, tema carreira.', psicologaId: null, agendamentoIso: null, pago: true },
+    { id: 'c5', nome: 'Beatriz F.', origem: 'WhatsApp', preferencia: 'indiferente', modalidade: 'pacote', frequenciaSemanal: 2, resumo: 'Pânico, urgência média.', psicologaId: null, agendamentoIso: null, pago: false },
+    { id: 'c6', nome: 'Carla T.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', frequenciaSemanal: 1, resumo: 'Em acompanhamento.', psicologaId: 'p1', agendamentoIso: null, pago: true },
+    { id: 'c7', nome: 'Diego R.', origem: 'WhatsApp', preferencia: 'M', modalidade: 'avulso', resumo: 'Retorno.', psicologaId: 'p3', agendamentoIso: null, pago: true },
   ];
 }

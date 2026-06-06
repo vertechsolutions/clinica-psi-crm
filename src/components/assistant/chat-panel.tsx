@@ -2,16 +2,32 @@
 import { useRef, useState, useEffect } from 'react';
 import { useAssistant, type Msg } from '@/stores/assistant-store';
 import { useKanban } from '@/stores/kanban-store';
+import type { LeadExtraido } from '@/lib/triagem';
 import { Avatar } from '../avatar';
 
 const ASSIST_AVATAR = 'https://randomuser.me/api/portraits/women/79.jpg';
+
+/** Converte o lead extraido pela triagem num card do kanban, com defaults seguros. */
+function leadParaCard(lead: LeadExtraido | null, fallbackResumo: string) {
+  const modalidade = lead?.modalidade ?? 'avulso';
+  return {
+    nome: lead?.nome?.trim() || 'Lead do chat',
+    preferencia: lead?.preferencia ?? 'indiferente',
+    modalidade,
+    frequenciaSemanal: modalidade === 'pacote' ? lead?.frequenciaSemanal ?? 1 : undefined,
+    resumo: lead?.resumo?.trim() || fallbackResumo,
+  };
+}
 
 export function ChatPanel() {
   const messages = useAssistant((s) => s.messages);
   const systemPrompt = useAssistant((s) => s.systemPrompt);
   const loading = useAssistant((s) => s.loading);
+  const ultimoLead = useAssistant((s) => s.ultimoLead);
   const push = useAssistant((s) => s.push);
   const setLoading = useAssistant((s) => s.setLoading);
+  const setUltimoLead = useAssistant((s) => s.setUltimoLead);
+  const setLeadCriado = useAssistant((s) => s.setLeadCriado);
   const reset = useAssistant((s) => s.reset);
   const addCard = useKanban((s) => s.addCard);
   const [text, setText] = useState('');
@@ -35,7 +51,17 @@ export function ChatPanel() {
         body: JSON.stringify({ system: systemPrompt, messages: next }),
       });
       const data = await r.json();
-      push({ role: 'assistant', content: data.text || `⚠️ ${data.error ?? 'sem resposta'}` });
+      if (data.error) {
+        push({ role: 'assistant', content: `⚠️ ${data.error}` });
+        return;
+      }
+      push({ role: 'assistant', content: data.resposta || '⚠️ sem resposta' });
+      if (data.lead) setUltimoLead(data.lead as LeadExtraido);
+      // cria o card automaticamente quando a triagem terminou de coletar as infos
+      if (data.pronto && !useAssistant.getState().leadCriado) {
+        addCard(leadParaCard(data.lead, t.slice(0, 120)));
+        setLeadCriado(true);
+      }
     } catch {
       push({ role: 'assistant', content: '⚠️ erro de rede' });
     } finally {
@@ -43,14 +69,11 @@ export function ChatPanel() {
     }
   }
 
+  // override manual: usa os dados ja extraidos da conversa (nao mais hardcoded)
   function mandarProCRM() {
     const ultimaUser = [...messages].reverse().find((m) => m.role === 'user');
-    addCard({
-      nome: 'Lead do chat',
-      preferencia: 'indiferente',
-      modalidade: 'avulso',
-      resumo: ultimaUser?.content.slice(0, 120) ?? 'Veio da triagem do assistente.',
-    });
+    addCard(leadParaCard(ultimoLead, ultimaUser?.content.slice(0, 120) ?? 'Veio da triagem do assistente.'));
+    setLeadCriado(true);
   }
 
   return (
