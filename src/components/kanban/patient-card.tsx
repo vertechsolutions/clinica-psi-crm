@@ -19,15 +19,16 @@ export function PatientCard({ paciente, overlay = false }: { paciente: Paciente;
   });
   const pref = prefChip[paciente.preferencia];
   const alocado = paciente.psicologaId !== null;
+  const naoPago = !paciente.pago;
   const modalidadeLabel =
     paciente.modalidade === 'pacote' && paciente.frequenciaSemanal
       ? `pacote ${paciente.frequenciaSemanal}x/sem`
       : paciente.modalidade;
 
-  const base = 'relative w-60 shrink-0 rounded-2xl border p-4 transition-all';
-  const tone = paciente.pago
-    ? 'border-line bg-surface'
-    : 'border-[#ef4444]/45 bg-[#ef4444]/[0.07]';
+  // card sempre branco (nome legível como nos demais); o "não pago" entra como
+  // duas camadas decorativas suaves por cima: glow no canto + barra de status.
+  const base = 'relative w-60 shrink-0 rounded-2xl border bg-surface p-4 transition-all';
+  const tone = naoPago ? 'border-[#ef4444]/30' : 'border-line';
   const cls = overlay
     ? `${base} ${tone} rotate-[3deg] scale-[1.04] shadow-2xl ring-2 ring-cyan-dark/30`
     : isDragging
@@ -36,10 +37,28 @@ export function PatientCard({ paciente, overlay = false }: { paciente: Paciente;
 
   return (
     <div ref={overlay ? undefined : setNodeRef} className={cls}>
+      {naoPago && (
+        <>
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-2xl"
+            style={{
+              background:
+                'radial-gradient(115% 78% at 0% 0%, rgba(239,68,68,0.13), rgba(239,68,68,0.045) 36%, transparent 64%)',
+            }}
+          />
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 left-0 w-[3px] rounded-l-2xl"
+            style={{ background: 'linear-gradient(to bottom, rgba(239,68,68,0.9), rgba(239,68,68,0.5))' }}
+          />
+        </>
+      )}
+
       <div
         {...(overlay ? {} : listeners)}
         {...(overlay ? {} : attributes)}
-        className={overlay ? 'cursor-grabbing' : 'cursor-grab touch-none active:cursor-grabbing'}
+        className={`relative z-10 ${overlay ? 'cursor-grabbing' : 'cursor-grab touch-none active:cursor-grabbing'}`}
       >
         <div className="flex items-start justify-between gap-2">
           <span className="text-[15px] font-semibold leading-tight text-navy">{paciente.nome}</span>
@@ -48,8 +67,9 @@ export function PatientCard({ paciente, overlay = false }: { paciente: Paciente;
           </span>
         </div>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {!paciente.pago && (
-            <span className="rounded-md bg-[#ef4444]/15 px-2 py-0.5 text-[11px] font-semibold text-[#dc2626]">
+          {naoPago && (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-[#ef4444]/10 px-2 py-0.5 text-[11px] font-semibold text-[#dc2626]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#ef4444]" />
               não pago ainda
             </span>
           )}
@@ -70,20 +90,23 @@ export function PatientCard({ paciente, overlay = false }: { paciente: Paciente;
         )}
       </div>
 
-      {!paciente.pago && !overlay && (
+      {naoPago && !overlay && (
         <button
           onClick={() => marcarPago(paciente.grupoId ?? paciente.id)}
-          className="mt-3 w-full rounded-lg border border-[#ef4444]/40 bg-[#ef4444]/10 py-1.5 text-[11px] font-semibold text-[#dc2626] transition-colors hover:border-[#16a34a]/50 hover:bg-[#16a34a]/12 hover:text-[#16a34a]"
-          title="Marcar como pago (remove o destaque vermelho)"
+          className="relative z-10 mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#ef4444]/30 py-1.5 text-[11px] font-semibold text-[#dc2626] transition-all hover:border-[#16a34a]/45 hover:bg-[#16a34a]/[0.08] hover:text-[#16a34a]"
+          title="Marcar como pago"
         >
-          ✓ marcar como pago
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+          marcar como pago
         </button>
       )}
 
       {alocado && !overlay && (
         <button
           onClick={() => unassign(paciente.id)}
-          className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-line bg-surface text-ink-muted shadow-md transition-colors hover:border-pink hover:text-pink"
+          className="absolute -right-2 -top-2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-line bg-surface text-ink-muted shadow-md transition-colors hover:border-pink hover:text-pink"
           title="Devolver pra não alocados"
         >
           ×
