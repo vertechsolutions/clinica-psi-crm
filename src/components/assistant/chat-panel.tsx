@@ -15,6 +15,7 @@ function leadParaCard(lead: LeadExtraido | null, fallbackResumo: string) {
     preferencia: lead?.preferencia ?? 'indiferente',
     modalidade,
     frequenciaSemanal: modalidade === 'pacote' ? lead?.frequenciaSemanal ?? 1 : undefined,
+    duracaoMeses: modalidade === 'pacote' ? lead?.duracaoMeses ?? 1 : undefined,
     resumo: lead?.resumo?.trim() || fallbackResumo,
   };
 }

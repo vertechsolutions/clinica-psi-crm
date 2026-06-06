@@ -2,7 +2,7 @@
 import { create } from 'zustand';
 import type { Psicologa, Paciente, Preferencia, Modalidade } from '@/types';
 import { buildPsicologas, buildPacientes } from '@/lib/mock-data';
-import { slotIso } from '@/lib/datetime';
+import { slotIso, ocorrenciasSemanais } from '@/lib/datetime';
 
 interface NovoCard {
   nome: string;
@@ -10,6 +10,7 @@ interface NovoCard {
   modalidade: Modalidade;
   resumo: string;
   frequenciaSemanal?: number;
+  duracaoMeses?: number;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -18,7 +19,7 @@ interface KanbanState {
   psicologas: Psicologa[];
   pacientes: Paciente[];
   seeded: boolean;
-  pending: { cardId: string; psicologaId: string; frequencia: number } | null;
+  pending: { cardId: string; psicologaId: string; frequencia: number; meses: number } | null;
   seedDemo: () => void;
   openSchedule: (cardId: string, psicologaId: string) => void;
   closeSchedule: () => void;
@@ -47,8 +48,10 @@ export const useKanban = create<KanbanState>((set, get) => ({
 
   openSchedule: (cardId, psicologaId) => {
     const card = get().pacientes.find((c) => c.id === cardId);
-    const frequencia = card?.modalidade === 'pacote' ? card.frequenciaSemanal ?? 1 : 1;
-    set({ pending: { cardId, psicologaId, frequencia } });
+    const isPacote = card?.modalidade === 'pacote';
+    const frequencia = isPacote ? card?.frequenciaSemanal ?? 1 : 1;
+    const meses = isPacote ? card?.duracaoMeses ?? 1 : 0;
+    set({ pending: { cardId, psicologaId, frequencia, meses } });
   },
   closeSchedule: () => set({ pending: null }),
 
@@ -59,25 +62,35 @@ export const useKanban = create<KanbanState>((set, get) => ({
       const base = s.pacientes.find((c) => c.id === pend.cardId);
       if (!base) return { pending: null };
       const grupoId = base.grupoId ?? `g${uid()}`;
-      const isos = [...slotIsos].sort((a, b) => a.localeCompare(b));
-      // 1a sessao reaproveita o card arrastado; as demais viram cards-sessao novos
+      const meses = base.modalidade === 'pacote' ? base.duracaoMeses ?? 1 : 0;
+      // cada horario base escolhido vira uma serie semanal no mesmo horario ao
+      // longo dos meses do pacote; avulso (meses=0) fica so com o horario base.
+      const isos = [
+        ...new Set(slotIsos.flatMap((iso) => ocorrenciasSemanais(iso, meses))),
+      ].sort((a, b) => a.localeCompare(b));
+      const total = isos.length;
+      // 1a sessao (cronologica) reaproveita o card arrastado; as demais sao novas
       const atualizados = s.pacientes.map((c) =>
         c.id === pend.cardId
-          ? { ...c, psicologaId: pend.psicologaId, agendamentoIso: isos[0], grupoId }
+          ? { ...c, psicologaId: pend.psicologaId, agendamentoIso: isos[0], grupoId, sessaoNum: 1, sessaoTotal: total }
           : c,
       );
-      const extras: Paciente[] = isos.slice(1).map((iso) => ({
+      const extras: Paciente[] = isos.slice(1).map((iso, i) => ({
         ...base,
         id: `c${uid()}`,
         psicologaId: pend.psicologaId,
         agendamentoIso: iso,
         grupoId,
+        sessaoNum: i + 2,
+        sessaoTotal: total,
       }));
+      // remove da agenda dessa semana so os slots realmente escolhidos
+      const escolhidos = new Set(slotIsos);
       return {
         pending: null,
         psicologas: s.psicologas.map((ps) =>
           ps.id === pend.psicologaId
-            ? { ...ps, agenda: ps.agenda.filter((sl) => !isos.includes(sl.iso)) }
+            ? { ...ps, agenda: ps.agenda.filter((sl) => !escolhidos.has(sl.iso)) }
             : ps,
         ),
         pacientes: [...atualizados, ...extras],
@@ -108,6 +121,7 @@ export const useKanban = create<KanbanState>((set, get) => ({
             agendamentoIso: null,
             pago: false,
             frequenciaSemanal: isPacote ? p.frequenciaSemanal ?? 1 : undefined,
+            duracaoMeses: isPacote ? p.duracaoMeses ?? 1 : undefined,
             grupoId: isPacote ? `g${uid()}` : undefined,
           },
         ],

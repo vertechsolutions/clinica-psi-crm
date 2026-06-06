@@ -31,6 +31,12 @@ export interface Paciente {
   pago: boolean;
   /** sessões por semana quando modalidade === 'pacote' */
   frequenciaSemanal?: number;
+  /** duração do pacote em meses (gera as sessões recorrentes no mesmo horário) */
+  duracaoMeses?: number;
   /** liga os cards-sessão gerados a partir de um mesmo pacote */
   grupoId?: string;
+  /** posição da sessão dentro da série do pacote (1..total) */
+  sessaoNum?: number;
+  /** total de sessões da série do pacote */
+  sessaoTotal?: number;
 }

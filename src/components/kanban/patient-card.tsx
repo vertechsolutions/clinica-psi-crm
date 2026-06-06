@@ -21,8 +21,10 @@ export function PatientCard({ paciente, overlay = false }: { paciente: Paciente;
   const alocado = paciente.psicologaId !== null;
   const naoPago = !paciente.pago;
   const modalidadeLabel =
-    paciente.modalidade === 'pacote' && paciente.frequenciaSemanal
-      ? `pacote ${paciente.frequenciaSemanal}x/sem`
+    paciente.modalidade === 'pacote'
+      ? `pacote${paciente.frequenciaSemanal ? ` ${paciente.frequenciaSemanal}x/sem` : ''}${
+          paciente.duracaoMeses ? ` · ${paciente.duracaoMeses}m` : ''
+        }`
       : paciente.modalidade;
 
   // overflow-hidden faz as camadas decorativas do "não pago" (wash + faixa lateral)
@@ -88,6 +90,11 @@ export function PatientCard({ paciente, overlay = false }: { paciente: Paciente;
               <path d="M16 2v4M8 2v4M3 10h18" />
             </svg>
             {fmtData(paciente.agendamentoIso)}
+            {paciente.sessaoTotal && paciente.sessaoTotal > 1 && (
+              <span className="ml-0.5 rounded bg-cyan-dark/15 px-1.5 py-px text-[11px] font-bold">
+                {paciente.sessaoNum}/{paciente.sessaoTotal}
+              </span>
+            )}
           </div>
         )}
       </div>

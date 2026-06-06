@@ -81,13 +81,14 @@ const cenarios: Cenario[] = [
     },
   },
   {
-    nome: 'interessado pacote 2x homem',
+    nome: 'interessado pacote 2x homem 3 meses',
     falas: [
       'boa tarde, quero comecar terapia',
       'sou o Lucas',
       'prefiro um psicologo homem',
       'queria acompanhamento, um pacote mensal',
       'duas vezes por semana',
+      'por uns 3 meses',
       'fechado, pode marcar',
     ],
     checar: (t) => {
@@ -97,10 +98,11 @@ const cenarios: Cenario[] = [
         !!l.nome &&
         l.preferencia === 'M' &&
         l.modalidade === 'pacote' &&
-        (l.frequenciaSemanal ?? 0) >= 2;
+        (l.frequenciaSemanal ?? 0) >= 2 &&
+        (l.duracaoMeses ?? 0) >= 1;
       return {
         ok,
-        nota: `pronto=${algumPronto(t)} nome=${l.nome} pref=${l.preferencia} modal=${l.modalidade} freq=${l.frequenciaSemanal}`,
+        nota: `pronto=${algumPronto(t)} nome=${l.nome} pref=${l.preferencia} modal=${l.modalidade} freq=${l.frequenciaSemanal} meses=${l.duracaoMeses}`,
       };
     },
   },

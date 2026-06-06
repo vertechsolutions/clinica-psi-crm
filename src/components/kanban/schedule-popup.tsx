@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useKanban } from '@/stores/kanban-store';
-import { fmtData, fmtDiaSemana } from '@/lib/datetime';
+import { fmtData, fmtDiaSemana, ocorrenciasSemanais } from '@/lib/datetime';
 import { Avatar } from '../avatar';
 
 export function SchedulePopup() {
@@ -12,7 +12,9 @@ export function SchedulePopup() {
   const [sel, setSel] = useState<string[]>([]);
 
   const freq = pending?.frequencia ?? 1;
-  const multi = freq > 1;
+  const meses = pending?.meses ?? 0;
+  const isPacote = meses > 0;
+  const precisaVariosDias = freq > 1;
 
   // zera a seleção sempre que abre pra outro card/psicóloga
   useEffect(() => {
@@ -25,10 +27,12 @@ export function SchedulePopup() {
 
   const diasDistintos = new Set(sel.map((iso) => iso.slice(0, 10))).size;
   const completo = sel.length === freq;
+  // total real de sessões após expandir a recorrência semanal pelos meses do pacote
+  const totalSessoes = sel.flatMap((iso) => ocorrenciasSemanais(iso, meses)).length;
 
   function onSlot(iso: string) {
-    if (!multi) {
-      confirm([iso]); // avulso: clique direto agenda
+    if (!isPacote) {
+      confirm([iso]); // avulso: clique direto agenda 1 sessão
       return;
     }
     setSel((cur) =>
@@ -50,7 +54,12 @@ export function SchedulePopup() {
           <div className="min-w-0">
             <div className="text-base font-semibold text-navy">{psi.nome}</div>
             <div className="truncate text-xs text-ink-muted">
-              {psi.especialidade} · {multi ? `escolha ${freq} horários` : 'escolha o horário'}
+              {psi.especialidade} ·{' '}
+              {isPacote
+                ? precisaVariosDias
+                  ? `escolha ${freq} horários base`
+                  : 'escolha o horário base'
+                : 'escolha o horário'}
             </div>
           </div>
           <button onClick={close} className="ml-auto text-2xl leading-none text-ink-muted hover:text-navy">
@@ -58,10 +67,11 @@ export function SchedulePopup() {
           </button>
         </div>
 
-        {multi && (
+        {isPacote && (
           <div className="mt-4 flex items-center justify-between rounded-xl bg-cyan/5 px-3 py-2 text-xs">
             <span className="font-medium text-navy">
-              Pacote {freq}x/semana · selecione {freq} horários em {freq} dias
+              Pacote {freq}x/sem · {meses} {meses > 1 ? 'meses' : 'mês'}
+              {precisaVariosDias ? ` · ${freq} dias distintos` : ''}
             </span>
             <span className={`font-semibold ${completo ? 'text-[#16a34a]' : 'text-cyan-dark'}`}>
               {sel.length}/{freq}
@@ -100,19 +110,21 @@ export function SchedulePopup() {
             })}
         </div>
 
-        {multi && completo && diasDistintos < freq && (
+        {precisaVariosDias && completo && diasDistintos < freq && (
           <p className="mt-3 rounded-lg bg-amber-400/10 px-3 py-2 text-[12px] font-medium text-amber-600">
             Dica: pra um pacote {freq}x/semana, escolha {freq} dias diferentes.
           </p>
         )}
 
-        {multi && (
+        {isPacote && (
           <button
             onClick={() => confirm(sel)}
             disabled={!completo}
             className="mt-4 w-full rounded-xl bg-cyan-dark py-2.5 text-sm font-semibold text-white transition-colors hover:bg-cyan-dark/90 disabled:opacity-40"
           >
-            {completo ? `Agendar ${freq} sessões` : `Selecione ${freq - sel.length} horário(s)`}
+            {completo
+              ? `Agendar ${totalSessoes} sessões no mesmo horário`
+              : `Selecione ${freq - sel.length} horário(s)`}
           </button>
         )}
 

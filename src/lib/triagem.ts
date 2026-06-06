@@ -15,8 +15,9 @@ Alem de conversar, voce preenche um registro estruturado a cada turno:
   - "preferencia": "F" se prefere mulher, "M" se prefere homem, "indiferente" se tanto faz; null se ainda nao falou.
   - "modalidade": "avulso" ou "pacote"; null se ainda nao definiu.
   - "frequenciaSemanal": numero de sessoes por semana SE for pacote (1, 2, 3...); null caso contrario.
-  - "resumo": uma frase curta sobre o caso/queixa pro CRM (ex: "Ansiedade no trabalho, quer pacote").
-- "pronto": true SOMENTE quando ja tem nome E preferencia E modalidade (e a frequenciaSemanal, se for pacote) E a pessoa demonstrou interesse real em seguir pro agendamento/pagamento. Em qualquer outro caso (curioso, cantada, ainda coletando dados, so tirando duvida), "pronto" e false.`;
+  - "duracaoMeses": por quantos meses o pacote vai (1, 2, 3...) SE for pacote; null caso contrario.
+  - "resumo": uma frase curta sobre o caso/queixa pro CRM (ex: "Ansiedade no trabalho, quer pacote de 3 meses").
+- "pronto": true SOMENTE quando ja tem nome E preferencia E modalidade (e, se for pacote, a frequenciaSemanal E a duracaoMeses) E a pessoa demonstrou interesse real em seguir pro agendamento/pagamento. Em qualquer outro caso (curioso, cantada, ainda coletando dados, so tirando duvida), "pronto" e false.`;
 
 export type Preferencia = 'F' | 'M' | 'indiferente';
 export type Modalidade = 'avulso' | 'pacote';
@@ -33,6 +34,8 @@ export interface LeadExtraido {
   modalidade: Modalidade | null;
   /** so faz sentido quando modalidade === 'pacote' (sessoes por semana) */
   frequenciaSemanal: number | null;
+  /** so faz sentido quando modalidade === 'pacote' (duracao em meses) */
+  duracaoMeses: number | null;
   resumo: string | null;
 }
 
@@ -63,9 +66,10 @@ const responseSchema = {
         preferencia: { type: Type.STRING, enum: ['F', 'M', 'indiferente'], nullable: true },
         modalidade: { type: Type.STRING, enum: ['avulso', 'pacote'], nullable: true },
         frequenciaSemanal: { type: Type.INTEGER, nullable: true },
+        duracaoMeses: { type: Type.INTEGER, nullable: true },
         resumo: { type: Type.STRING, nullable: true },
       },
-      required: ['nome', 'preferencia', 'modalidade', 'frequenciaSemanal', 'resumo'],
+      required: ['nome', 'preferencia', 'modalidade', 'frequenciaSemanal', 'duracaoMeses', 'resumo'],
     },
     pronto: { type: Type.BOOLEAN },
   },
@@ -78,6 +82,7 @@ const EMPTY_LEAD: LeadExtraido = {
   preferencia: null,
   modalidade: null,
   frequenciaSemanal: null,
+  duracaoMeses: null,
   resumo: null,
 };
 
@@ -95,10 +100,10 @@ function coerceModal(v: unknown): Modalidade | null {
 function normalize(raw: unknown): TriagemResult {
   const o = (raw ?? {}) as Record<string, unknown>;
   const leadRaw = (o.lead ?? {}) as Record<string, unknown>;
-  const freq =
-    typeof leadRaw.frequenciaSemanal === 'number' && leadRaw.frequenciaSemanal > 0
-      ? Math.round(leadRaw.frequenciaSemanal)
-      : null;
+  const posInt = (v: unknown) =>
+    typeof v === 'number' && v > 0 ? Math.round(v) : null;
+  const freq = posInt(leadRaw.frequenciaSemanal);
+  const dur = posInt(leadRaw.duracaoMeses);
   return {
     resposta: typeof o.resposta === 'string' ? o.resposta : '',
     lead: {
@@ -106,6 +111,7 @@ function normalize(raw: unknown): TriagemResult {
       preferencia: coercePref(leadRaw.preferencia),
       modalidade: coerceModal(leadRaw.modalidade),
       frequenciaSemanal: freq,
+      duracaoMeses: dur,
       resumo: typeof leadRaw.resumo === 'string' && leadRaw.resumo.trim() ? leadRaw.resumo.trim() : null,
     },
     pronto: o.pronto === true,
