@@ -10,7 +10,7 @@ export function UnassignedLane({ pacientes }: { pacientes: Paciente[] }) {
   return (
     <div className="sticky bottom-0 border-t-2 border-cyan-dark/30 bg-navy shadow-[0_-8px_24px_rgba(15,23,42,0.18)]">
       <div className="flex items-center gap-2 px-5 pt-3 text-xs font-semibold uppercase tracking-wide text-cyan">
-        Não alocados
+        Triagem concluída · aguardando distribuição
         <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white/[0.12] px-1.5 text-cyan">
           {cards.length}
         </span>

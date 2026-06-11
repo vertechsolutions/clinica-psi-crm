@@ -3,7 +3,9 @@ import { useEffect, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
+  KeyboardSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -31,7 +33,11 @@ export function Board() {
   }, [seedDemo]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    // mouse: arrasta a partir de 6px de movimento (não rouba cliques)
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    // touch: segura 180ms antes de arrastar, pra não atrapalhar o scroll do dedo
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(KeyboardSensor),
   );
 
   function onDragEnd(e: DragEndEvent) {
@@ -48,7 +54,7 @@ export function Board() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex gap-1 border-b border-line bg-surface px-4 pt-2">
+      <div className="flex items-center gap-1 border-b border-line bg-surface px-4 pt-2">
         {(['distribuicao', 'arquivados'] as const).map((t) => (
           <button
             key={t}
@@ -62,6 +68,10 @@ export function Board() {
             {t === 'distribuicao' ? 'Distribuição' : 'Arquivados'}
           </button>
         ))}
+        <span className="ml-auto mb-1 hidden items-center gap-1.5 rounded-full bg-amber-400/10 px-2.5 py-1 text-[10px] font-medium text-amber-700 sm:flex">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          dados fictícios
+        </span>
       </div>
 
       {sub === 'arquivados' ? (

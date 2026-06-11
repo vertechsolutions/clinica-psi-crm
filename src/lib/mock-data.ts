@@ -42,11 +42,63 @@ export function buildPsicologas(): Psicologa[] {
 
 export function buildPacientes(): Paciente[] {
   return [
-    { id: 'c1', nome: 'Mariana S.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', frequenciaSemanal: 2, duracaoMeses: 3, resumo: 'Ansiedade no trabalho, quer pacote de 3 meses. Prefere mulher.', psicologaId: null, agendamentoIso: null, pago: true },
-    { id: 'c2', nome: 'João P.', origem: 'WhatsApp', preferencia: 'indiferente', modalidade: 'avulso', resumo: 'Sessão avulsa pra experimentar. Sem preferência.', psicologaId: null, agendamentoIso: null, pago: false },
-    { id: 'c3', nome: 'Rafaela M.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', frequenciaSemanal: 1, duracaoMeses: 2, resumo: 'Luto recente. Quer começar essa semana.', psicologaId: null, agendamentoIso: null, pago: true },
-    { id: 'c4', nome: 'Lucas D.', origem: 'WhatsApp', preferencia: 'M', modalidade: 'avulso', resumo: 'Quer psicólogo homem, tema carreira.', psicologaId: null, agendamentoIso: null, pago: true },
-    { id: 'c5', nome: 'Beatriz F.', origem: 'WhatsApp', preferencia: 'indiferente', modalidade: 'pacote', frequenciaSemanal: 2, duracaoMeses: 2, resumo: 'Pânico, urgência média.', psicologaId: null, agendamentoIso: null, pago: false },
+    {
+      id: 'c1', nome: 'Mariana S.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', frequenciaSemanal: 2, duracaoMeses: 3,
+      resumo: 'Ansiedade ligada ao trabalho, busca acompanhamento.', psicologaId: null, agendamentoIso: null, pago: true,
+      triagem: {
+        motivacao: 'Ansiosa por causa do trabalho, não consegue desligar à noite.',
+        sintomas: ['humor ansioso', 'questoes no trabalho', 'baixa autoestima'],
+        diagnostico: 'Ansiedade (já em uso de medicação).',
+        terapiaAnterior: 'Nunca fez terapia antes.',
+        expectativa: 'Sentir-se mais tranquila e dormir melhor.',
+        preferenciaAbordagem: 'Prefere mulher; aberta a TCC.',
+        disponibilidade: 'Terça e quinta à tarde.',
+        profissao: 'Advogada', telefone: '(11) 98888-7777', email: 'mari.souza@email.com',
+        statusRelacionamento: 'casado', filhos: '1',
+      },
+    },
+    {
+      id: 'c2', nome: 'João P.', origem: 'WhatsApp', preferencia: 'indiferente', modalidade: 'avulso',
+      resumo: 'Autoconhecimento; primeira vez na terapia.', psicologaId: null, agendamentoIso: null, pago: false,
+      triagem: {
+        motivacao: 'Quer se entender melhor e tomar decisões com mais clareza.',
+        sintomas: ['autoconhecimento'], terapiaAnterior: 'Primeira vez.',
+        disponibilidade: 'Quartas à noite.', profissao: 'Analista de TI', telefone: '(11) 96666-5555',
+        statusRelacionamento: 'solteiro', filhos: 'nao',
+      },
+    },
+    {
+      id: 'c3', nome: 'Rafaela M.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', frequenciaSemanal: 1, duracaoMeses: 2,
+      resumo: 'Luto recente, quer começar essa semana.', psicologaId: null, agendamentoIso: null, pago: true,
+      triagem: {
+        motivacao: 'Perda de um familiar próximo há poucas semanas.',
+        sintomas: ['luto', 'humor depressivo'], expectativa: 'Conseguir atravessar o luto com apoio.',
+        preferenciaAbordagem: 'Prefere mulher.', disponibilidade: 'Sextas de manhã.',
+        contatoEmergencia: 'Irmã — (21) 95555-4444', telefone: '(21) 97777-6666',
+        statusRelacionamento: 'casado', filhos: '2',
+      },
+    },
+    {
+      id: 'c4', nome: 'Lucas D.', origem: 'WhatsApp', preferencia: 'M', modalidade: 'avulso',
+      resumo: 'Questões de carreira e propósito.', psicologaId: null, agendamentoIso: null, pago: true,
+      triagem: {
+        motivacao: 'Insatisfeito com a carreira, pensando em mudar de área.',
+        sintomas: ['questoes no trabalho', 'autoconhecimento'], preferenciaAbordagem: 'Prefere psicólogo homem.',
+        disponibilidade: 'Segundas à tarde.', profissao: 'Engenheiro', telefone: '(48) 99111-2222',
+        statusRelacionamento: 'namorando', filhos: 'nao',
+      },
+    },
+    {
+      id: 'c5', nome: 'Beatriz F.', origem: 'WhatsApp', preferencia: 'indiferente', modalidade: 'pacote', frequenciaSemanal: 2, duracaoMeses: 2,
+      resumo: 'Crises de pânico, urgência média.', psicologaId: null, agendamentoIso: null, pago: false,
+      triagem: {
+        motivacao: 'Crises de pânico que pioraram nos últimos meses.',
+        sintomas: ['humor ansioso', 'dependencia emocional'], diagnostico: 'Síndrome do pânico (a confirmar).',
+        terapiaAnterior: 'Fez por 6 meses, parou.', expectativa: 'Reduzir a frequência das crises.',
+        disponibilidade: 'Terça e sexta, qualquer horário.', telefone: '(51) 98333-4444',
+        statusRelacionamento: 'separado', filhos: '1',
+      },
+    },
     { id: 'c6', nome: 'Carla T.', origem: 'WhatsApp', preferencia: 'F', modalidade: 'pacote', frequenciaSemanal: 1, duracaoMeses: 3, resumo: 'Em acompanhamento.', psicologaId: 'p1', agendamentoIso: null, pago: true },
     { id: 'c7', nome: 'Diego R.', origem: 'WhatsApp', preferencia: 'M', modalidade: 'avulso', resumo: 'Retorno.', psicologaId: 'p3', agendamentoIso: null, pago: true },
   ];

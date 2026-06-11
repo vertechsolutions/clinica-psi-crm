@@ -18,6 +18,28 @@ export interface Psicologa {
   agenda: Slot[];
 }
 
+/** Ficha estruturada da triagem, anexada ao card pra exibir os detalhes no painel. */
+export interface FichaTriagem {
+  motivacao?: string | null;
+  expectativa?: string | null;
+  sintomas?: string[];
+  diagnostico?: string | null;
+  terapiaAnterior?: string | null;
+  preferenciaAbordagem?: string | null;
+  disponibilidade?: string | null;
+  // contato / identificacao
+  dataNascimento?: string | null;
+  email?: string | null;
+  telefone?: string | null;
+  contatoEmergencia?: string | null;
+  profissao?: string | null;
+  statusRelacionamento?: string | null;
+  filhos?: string | null;
+  vicios?: string | null;
+  notaFiscal?: string | null;
+  observacoes?: string | null;
+}
+
 export interface Paciente {
   id: string;
   nome: string;
@@ -27,6 +49,8 @@ export interface Paciente {
   resumo: string;
   psicologaId: string | null;
   agendamentoIso: string | null;
+  /** ficha completa da triagem por IA (presente nos cards criados pelo chat) */
+  triagem?: FichaTriagem;
   /** false enquanto o cliente não pagou (card fica vermelho + tag "não pago") */
   pago: boolean;
   /** sessões por semana quando modalidade === 'pacote' */

@@ -59,50 +59,59 @@ const cenarios: Cenario[] = [
     }),
   },
   {
-    nome: 'interessada avulso mulher',
+    nome: 'interessada ansiedade no trabalho',
     falas: [
-      'oi, queria marcar uma consulta',
-      'meu nome e Mariana',
-      'prefiro ser atendida por uma mulher',
-      'queria so uma sessao pra experimentar',
-      'pode ser, quero sim',
+      'oi, queria comecar a fazer terapia',
+      'meu nome e Mariana Souza',
+      'ando muito ansiosa, principalmente por causa do trabalho, nao consigo desligar',
+      'ja tenho diagnostico de ansiedade sim, tomo remedio',
+      'nunca fiz terapia antes',
+      'sou advogada',
+      'queria me sentir mais tranquila e dormir melhor',
+      'posso terca ou quinta a tarde',
+      'meu email e mari.souza@email.com e meu telefone 11 98888-7777',
+      'pode marcar sim, obrigada',
     ],
     checar: (t) => {
       const l = ultimo(t).lead;
+      const sintomasOk =
+        l.sintomas.includes('humor ansioso') || l.sintomas.includes('questoes no trabalho');
       const ok =
         algumPronto(t) &&
         !!l.nome &&
-        l.preferencia === 'F' &&
-        l.modalidade === 'avulso';
+        (!!l.telefone || !!l.email) &&
+        (!!l.motivacao || !!l.resumo) &&
+        !!l.disponibilidade &&
+        sintomasOk;
       return {
         ok,
-        nota: `pronto=${algumPronto(t)} nome=${l.nome} pref=${l.preferencia} modal=${l.modalidade}`,
+        nota: `pronto=${algumPronto(t)} nome=${l.nome} tel=${l.telefone} email=${l.email} disp=${l.disponibilidade} sintomas=[${l.sintomas.join(', ')}] diag=${l.diagnostico}`,
       };
     },
   },
   {
-    nome: 'interessado pacote 2x homem 3 meses',
+    nome: 'luto, ja fez terapia, quer abordagem',
     falas: [
-      'boa tarde, quero comecar terapia',
-      'sou o Lucas',
-      'prefiro um psicologo homem',
-      'queria acompanhamento, um pacote mensal',
-      'duas vezes por semana',
-      'por uns 3 meses',
-      'fechado, pode marcar',
+      'boa tarde, perdi minha mae faz dois meses e to muito mal',
+      'sou o Lucas Pereira',
+      'ja fiz terapia ha uns anos, foi bom, me ajudou bastante',
+      'gostaria de uma psicologa, e se possivel TCC',
+      'consigo nas segundas de manha',
+      'meu whatsapp e 21 97777-6666',
+      'em caso de emergencia pode falar com minha irma Ana, 21 95555-4444',
+      'pode seguir, obrigado',
     ],
     checar: (t) => {
       const l = ultimo(t).lead;
       const ok =
         algumPronto(t) &&
         !!l.nome &&
-        l.preferencia === 'M' &&
-        l.modalidade === 'pacote' &&
-        (l.frequenciaSemanal ?? 0) >= 2 &&
-        (l.duracaoMeses ?? 0) >= 1;
+        !!l.telefone &&
+        l.sintomas.includes('luto') &&
+        !!l.disponibilidade;
       return {
         ok,
-        nota: `pronto=${algumPronto(t)} nome=${l.nome} pref=${l.preferencia} modal=${l.modalidade} freq=${l.frequenciaSemanal} meses=${l.duracaoMeses}`,
+        nota: `pronto=${algumPronto(t)} nome=${l.nome} tel=${l.telefone} emerg=${l.contatoEmergencia} terapiaAnt=${l.terapiaAnterior} abordagem=${l.preferenciaAbordagem} sintomas=[${l.sintomas.join(', ')}]`,
       };
     },
   },

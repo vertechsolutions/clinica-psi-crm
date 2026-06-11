@@ -1,6 +1,7 @@
 'use client';
+import { useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import type { Paciente, Preferencia } from '@/types';
+import type { Paciente, Preferencia, FichaTriagem } from '@/types';
 import { fmtData } from '@/lib/datetime';
 import { useKanban } from '@/stores/kanban-store';
 
@@ -10,13 +11,51 @@ const prefChip: Record<Preferencia, { label: string; cls: string }> = {
   indiferente: { label: 'tanto faz', cls: 'bg-ink-muted/10 text-ink-muted' },
 };
 
+/** linha label: valor da ficha de triagem, escondida quando vazia */
+function FichaLinha({ label, valor }: { label: string; valor?: string | null }) {
+  if (!valor) return null;
+  return (
+    <div className="flex gap-1.5 text-[11.5px] leading-snug">
+      <span className="shrink-0 font-semibold text-ink-muted">{label}:</span>
+      <span className="text-ink">{valor}</span>
+    </div>
+  );
+}
+
+/** true se a ficha tem algo alem do resumo pra mostrar */
+function temFicha(t?: FichaTriagem): boolean {
+  if (!t) return false;
+  return Boolean(
+    t.motivacao ||
+      t.expectativa ||
+      (t.sintomas && t.sintomas.length) ||
+      t.diagnostico ||
+      t.terapiaAnterior ||
+      t.preferenciaAbordagem ||
+      t.disponibilidade ||
+      t.dataNascimento ||
+      t.email ||
+      t.telefone ||
+      t.contatoEmergencia ||
+      t.profissao ||
+      t.statusRelacionamento ||
+      t.filhos ||
+      t.vicios ||
+      t.notaFiscal ||
+      t.observacoes,
+  );
+}
+
 export function PatientCard({ paciente, overlay = false }: { paciente: Paciente; overlay?: boolean }) {
   const unassign = useKanban((s) => s.unassign);
   const marcarPago = useKanban((s) => s.marcarPago);
+  const [aberto, setAberto] = useState(false);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: overlay ? `ov-${paciente.id}` : paciente.id,
     disabled: overlay,
   });
+  const ficha = paciente.triagem;
+  const mostraFicha = !overlay && temFicha(ficha);
   const pref = prefChip[paciente.preferencia];
   const alocado = paciente.psicologaId !== null;
   const naoPago = !paciente.pago;
@@ -98,6 +137,62 @@ export function PatientCard({ paciente, overlay = false }: { paciente: Paciente;
           </div>
         )}
       </div>
+
+      {mostraFicha && (
+        <div className="relative z-10 ml-1 mt-2.5">
+          <button
+            onClick={() => setAberto((v) => !v)}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-cyan-dark transition-colors hover:bg-cyan/10"
+          >
+            {aberto ? 'Ocultar triagem' : 'Ver triagem'}
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`transition-transform ${aberto ? 'rotate-180' : ''}`}
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          {aberto && ficha && (
+            <div className="fade-in mt-2 space-y-1 rounded-xl border border-line bg-surface-2/70 p-2.5">
+              <FichaLinha label="Motivação" valor={ficha.motivacao} />
+              {ficha.sintomas && ficha.sintomas.length > 0 && (
+                <div className="flex flex-wrap gap-1 py-0.5">
+                  {ficha.sintomas.map((s) => (
+                    <span
+                      key={s}
+                      className="rounded-md bg-cyan-dark/10 px-1.5 py-0.5 text-[10.5px] font-medium text-cyan-dark"
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <FichaLinha label="Diagnóstico" valor={ficha.diagnostico} />
+              <FichaLinha label="Já fez terapia" valor={ficha.terapiaAnterior} />
+              <FichaLinha label="Expectativa" valor={ficha.expectativa} />
+              <FichaLinha label="Abordagem" valor={ficha.preferenciaAbordagem} />
+              <FichaLinha label="Disponibilidade" valor={ficha.disponibilidade} />
+              <FichaLinha label="Profissão" valor={ficha.profissao} />
+              <FichaLinha label="Relacionamento" valor={ficha.statusRelacionamento} />
+              <FichaLinha label="Filhos" valor={ficha.filhos} />
+              <FichaLinha label="Vícios" valor={ficha.vicios} />
+              <FichaLinha label="Nascimento" valor={ficha.dataNascimento} />
+              <FichaLinha label="E-mail" valor={ficha.email} />
+              <FichaLinha label="Telefone" valor={ficha.telefone} />
+              <FichaLinha label="Emergência" valor={ficha.contatoEmergencia} />
+              <FichaLinha label="Nota fiscal" valor={ficha.notaFiscal} />
+              <FichaLinha label="Obs." valor={ficha.observacoes} />
+            </div>
+          )}
+        </div>
+      )}
 
       {naoPago && !overlay && (
         <button

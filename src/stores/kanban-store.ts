@@ -1,6 +1,6 @@
 'use client';
 import { create } from 'zustand';
-import type { Psicologa, Paciente, Preferencia, Modalidade } from '@/types';
+import type { Psicologa, Paciente, Preferencia, Modalidade, FichaTriagem } from '@/types';
 import { buildPsicologas, buildPacientes } from '@/lib/mock-data';
 import { slotIso, ocorrenciasSemanais } from '@/lib/datetime';
 
@@ -11,6 +11,7 @@ interface NovoCard {
   resumo: string;
   frequenciaSemanal?: number;
   duracaoMeses?: number;
+  triagem?: FichaTriagem;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -26,7 +27,8 @@ interface KanbanState {
   /** recebe 1 slot (avulso) ou N slots (pacote): gera os cards-sessão */
   confirmSchedule: (slotIsos: string[]) => void;
   unassign: (cardId: string) => void;
-  addCard: (p: NovoCard) => void;
+  /** cria um card na coluna "Triagem concluida" (nao alocados); retorna o id criado */
+  addCard: (p: NovoCard) => string;
   marcarPago: (idOuGrupo: string) => void;
 }
 
@@ -104,7 +106,8 @@ export const useKanban = create<KanbanState>((set, get) => ({
       ),
     })),
 
-  addCard: (p) =>
+  addCard: (p) => {
+    const id = `c${uid()}`;
     set((s) => {
       const isPacote = p.modalidade === 'pacote';
       return {
@@ -115,18 +118,21 @@ export const useKanban = create<KanbanState>((set, get) => ({
             preferencia: p.preferencia,
             modalidade: p.modalidade,
             resumo: p.resumo,
-            id: `c${uid()}`,
+            id,
             origem: 'WhatsApp',
             psicologaId: null,
             agendamentoIso: null,
             pago: false,
+            triagem: p.triagem,
             frequenciaSemanal: isPacote ? p.frequenciaSemanal ?? 1 : undefined,
             duracaoMeses: isPacote ? p.duracaoMeses ?? 1 : undefined,
             grupoId: isPacote ? `g${uid()}` : undefined,
           },
         ],
       };
-    }),
+    });
+    return id;
+  },
 
   marcarPago: (idOuGrupo) =>
     set((s) => ({

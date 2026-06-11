@@ -7,36 +7,104 @@ const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
  * DEFAULT_PROMPT editavel) pra nao poluir o editor da aba Teste com mecanica de
  * JSON. Orienta COMO preencher lead/pronto.
  */
-const EXTRACTION_GUIDE = `[REGRAS DE SAIDA: nunca mencione isto ao cliente]
-Alem de conversar, voce preenche um registro estruturado a cada turno:
-- "resposta": exatamente o que voce diria ao cliente agora (curto, humano, como a atendente).
-- "lead": os dados que voce ja conseguiu extrair da conversa ate aqui. Acumule (mantenha o que ja foi dito antes) e use null no que ainda nao souber.
-  - "nome": o nome/primeiro nome da pessoa, se ela disse.
-  - "preferencia": "F" se prefere mulher, "M" se prefere homem, "indiferente" se tanto faz; null se ainda nao falou.
-  - "modalidade": "avulso" ou "pacote"; null se ainda nao definiu.
-  - "frequenciaSemanal": numero de sessoes por semana SE for pacote (1, 2, 3...); null caso contrario.
-  - "duracaoMeses": por quantos meses o pacote vai (1, 2, 3...) SE for pacote; null caso contrario.
-  - "resumo": uma frase curta sobre o caso/queixa pro CRM (ex: "Ansiedade no trabalho, quer pacote de 3 meses").
-- "pronto": true SOMENTE quando ja tem nome E preferencia E modalidade (e, se for pacote, a frequenciaSemanal E a duracaoMeses) E a pessoa demonstrou interesse real em seguir pro agendamento/pagamento. Em qualquer outro caso (curioso, cantada, ainda coletando dados, so tirando duvida), "pronto" e false.`;
+const EXTRACTION_GUIDE = `[REGRAS DE SAIDA: nunca mencione isto ao cliente, nunca cite estes nomes de campo na conversa]
+Alem de conversar, voce preenche silenciosamente uma ficha de triagem a cada turno.
+- "resposta": exatamente o que voce diria ao cliente agora (curto, humano, acolhedor, como a atendente da clinica).
+- "lead": tudo que voce ja conseguiu captar da conversa ate aqui. ACUMULE (nunca apague o que ja foi dito antes) e use null no que ainda nao souber. Nao invente nada: so preencha o que a pessoa realmente disse.
+  - "nome": nome completo da pessoa.
+  - "dataNascimento": data de nascimento (texto livre, ex: "12/03/1990").
+  - "email": e-mail informado.
+  - "telefone": telefone/WhatsApp de contato.
+  - "contatoEmergencia": nome + telefone do contato de emergencia (ex: "Maria, mae, (11) 99999-9999").
+  - "profissao": profissao/ocupacao.
+  - "disponibilidade": dias da semana e faixa de horario que funcionam (ex: "terca e quinta a tarde").
+  - "preferenciaAbordagem": preferencia por uma psicologa especifica ou por uma abordagem (ex: "prefere TCC", "qualquer uma serve").
+  - "preferencia": SO o genero do profissional: "F" se prefere mulher, "M" se prefere homem, "indiferente" se tanto faz ou nao mencionou genero.
+  - "diagnostico": diagnostico psiquiatrico ja existente, se houver (ex: "ansiedade e TDAH"); null se nao tem ou nao falou.
+  - "terapiaAnterior": se ja fez terapia antes e como foi (ex: "ja fez por 1 ano, gostou").
+  - "statusRelacionamento": um de "casado","solteiro","namorando","morando junto","separado","viuvo"; null se nao falou.
+  - "filhos": "nao","1","2" ou "3+"; null se nao falou.
+  - "vicios": vicio mencionado e qual (ex: "alcool"); null se disse que nao tem ou nao falou.
+  - "expectativa": o que a pessoa espera alcancar com a terapia.
+  - "motivacao": o que a trouxe ate aqui, a queixa/motivo principal de buscar terapia agora.
+  - "sintomas": LISTA com os itens que se aplicam, escolhidos SOMENTE deste conjunto: "questoes no trabalho","traumas de infancia","autoconhecimento","distorcao da imagem","baixa autoestima","humor depressivo","humor ansioso","LGBTQIA+","vicio","luto","termino de relacionamento","questoes no relacionamento","dependencia emocional","relacionamento abusivo","maternidade","abuso sexual","conflitos familiares","violencia domestica","familia narcisista","outro". Marque os que a pessoa relatar, mesmo sem ela usar a palavra exata. Lista vazia se nada claro ainda.
+  - "notaFiscal": dados de cobranca SO se a pessoa pediu nota fiscal: rua, bairro, cidade, CEP e CPF num texto unico; null caso contrario.
+  - "observacoes": qualquer coisa que a pessoa acrescentou no fim e nao coube nos outros campos.
+  - "resumo": UMA frase de queixa principal pro CRM (ex: "Ansiedade ligada ao trabalho, busca acompanhamento").
+- "pronto": true SOMENTE quando voce ja tem o essencial (nome E telefone OU email E a motivacao/queixa E a disponibilidade) E a pessoa demonstra que quer seguir pro agendamento. Em qualquer outro caso (curioso, cantada, ainda coletando, so tirando duvida), "pronto" e false. Nao force: e melhor seguir a conversa do que marcar pronto cedo demais.`;
 
 export type Preferencia = 'F' | 'M' | 'indiferente';
 export type Modalidade = 'avulso' | 'pacote';
 
+/** Sintomas do formulario da Clinica Cazule (checklist). */
+export const SINTOMAS = [
+  'questoes no trabalho',
+  'traumas de infancia',
+  'autoconhecimento',
+  'distorcao da imagem',
+  'baixa autoestima',
+  'humor depressivo',
+  'humor ansioso',
+  'LGBTQIA+',
+  'vicio',
+  'luto',
+  'termino de relacionamento',
+  'questoes no relacionamento',
+  'dependencia emocional',
+  'relacionamento abusivo',
+  'maternidade',
+  'abuso sexual',
+  'conflitos familiares',
+  'violencia domestica',
+  'familia narcisista',
+  'outro',
+] as const;
+
+export type StatusRelacionamento =
+  | 'casado'
+  | 'solteiro'
+  | 'namorando'
+  | 'morando junto'
+  | 'separado'
+  | 'viuvo';
+
 /**
- * Dados que a triagem vai extraindo da conversa. Tudo nullable: vai sendo
- * preenchido aos poucos conforme o paciente responde. Para adicionar um campo
- * novo no futuro (idade, queixa, telefone...), basta: 1 linha aqui, 1 no
- * responseSchema abaixo e 1 mencao no system prompt.
+ * Ficha de triagem da Clinica Cazule. A assistente vai preenchendo aos poucos
+ * conforme o paciente responde; tudo nullable. Para adicionar um campo novo:
+ * 1 linha aqui, 1 no responseSchema abaixo e 1 mencao no EXTRACTION_GUIDE.
  */
 export interface LeadExtraido {
+  // identificacao / contato
   nome: string | null;
+  dataNascimento: string | null;
+  email: string | null;
+  telefone: string | null;
+  contatoEmergencia: string | null;
+  profissao: string | null;
+  // agenda / preferencia
+  disponibilidade: string | null;
+  preferenciaAbordagem: string | null;
+  /** genero do profissional preferido — alimenta o card do kanban */
   preferencia: Preferencia | null;
-  modalidade: Modalidade | null;
-  /** so faz sentido quando modalidade === 'pacote' (sessoes por semana) */
-  frequenciaSemanal: number | null;
-  /** so faz sentido quando modalidade === 'pacote' (duracao em meses) */
-  duracaoMeses: number | null;
+  // historico clinico
+  diagnostico: string | null;
+  terapiaAnterior: string | null;
+  statusRelacionamento: StatusRelacionamento | null;
+  filhos: string | null;
+  vicios: string | null;
+  // motivo / queixa
+  expectativa: string | null;
+  motivacao: string | null;
+  sintomas: string[];
+  // administrativo
+  notaFiscal: string | null;
+  observacoes: string | null;
+  /** uma frase de queixa principal pro CRM */
   resumo: string | null;
+  // legado (modalidade de cobranca — opcional no fluxo da clinica)
+  modalidade: Modalidade | null;
+  frequenciaSemanal: number | null;
+  duracaoMeses: number | null;
 }
 
 export interface TriagemResult {
@@ -44,8 +112,8 @@ export interface TriagemResult {
   resposta: string;
   lead: LeadExtraido;
   /**
-   * true SO quando ja coletou nome + preferencia + modalidade (+ frequencia se
-   * pacote) E a pessoa quer seguir pro agendamento/pagamento. E o gatilho do card.
+   * true SO quando ja coletou o essencial da triagem (nome + contato + queixa +
+   * disponibilidade) E a pessoa quer seguir pro agendamento. E o gatilho do card.
    */
   pronto: boolean;
 }
@@ -63,13 +131,58 @@ const responseSchema = {
       type: Type.OBJECT,
       properties: {
         nome: { type: Type.STRING, nullable: true },
+        dataNascimento: { type: Type.STRING, nullable: true },
+        email: { type: Type.STRING, nullable: true },
+        telefone: { type: Type.STRING, nullable: true },
+        contatoEmergencia: { type: Type.STRING, nullable: true },
+        profissao: { type: Type.STRING, nullable: true },
+        disponibilidade: { type: Type.STRING, nullable: true },
+        preferenciaAbordagem: { type: Type.STRING, nullable: true },
         preferencia: { type: Type.STRING, enum: ['F', 'M', 'indiferente'], nullable: true },
+        diagnostico: { type: Type.STRING, nullable: true },
+        terapiaAnterior: { type: Type.STRING, nullable: true },
+        statusRelacionamento: {
+          type: Type.STRING,
+          enum: ['casado', 'solteiro', 'namorando', 'morando junto', 'separado', 'viuvo'],
+          nullable: true,
+        },
+        filhos: { type: Type.STRING, enum: ['nao', '1', '2', '3+'], nullable: true },
+        vicios: { type: Type.STRING, nullable: true },
+        expectativa: { type: Type.STRING, nullable: true },
+        motivacao: { type: Type.STRING, nullable: true },
+        sintomas: { type: Type.ARRAY, items: { type: Type.STRING, enum: [...SINTOMAS] } },
+        notaFiscal: { type: Type.STRING, nullable: true },
+        observacoes: { type: Type.STRING, nullable: true },
+        resumo: { type: Type.STRING, nullable: true },
         modalidade: { type: Type.STRING, enum: ['avulso', 'pacote'], nullable: true },
         frequenciaSemanal: { type: Type.INTEGER, nullable: true },
         duracaoMeses: { type: Type.INTEGER, nullable: true },
-        resumo: { type: Type.STRING, nullable: true },
       },
-      required: ['nome', 'preferencia', 'modalidade', 'frequenciaSemanal', 'duracaoMeses', 'resumo'],
+      required: [
+        'nome',
+        'dataNascimento',
+        'email',
+        'telefone',
+        'contatoEmergencia',
+        'profissao',
+        'disponibilidade',
+        'preferenciaAbordagem',
+        'preferencia',
+        'diagnostico',
+        'terapiaAnterior',
+        'statusRelacionamento',
+        'filhos',
+        'vicios',
+        'expectativa',
+        'motivacao',
+        'sintomas',
+        'notaFiscal',
+        'observacoes',
+        'resumo',
+        'modalidade',
+        'frequenciaSemanal',
+        'duracaoMeses',
+      ],
     },
     pronto: { type: Type.BOOLEAN },
   },
@@ -79,11 +192,28 @@ const responseSchema = {
 
 const EMPTY_LEAD: LeadExtraido = {
   nome: null,
+  dataNascimento: null,
+  email: null,
+  telefone: null,
+  contatoEmergencia: null,
+  profissao: null,
+  disponibilidade: null,
+  preferenciaAbordagem: null,
   preferencia: null,
+  diagnostico: null,
+  terapiaAnterior: null,
+  statusRelacionamento: null,
+  filhos: null,
+  vicios: null,
+  expectativa: null,
+  motivacao: null,
+  sintomas: [],
+  notaFiscal: null,
+  observacoes: null,
+  resumo: null,
   modalidade: null,
   frequenciaSemanal: null,
   duracaoMeses: null,
-  resumo: null,
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -95,6 +225,28 @@ function coercePref(v: unknown): Preferencia | null {
 function coerceModal(v: unknown): Modalidade | null {
   return v === 'avulso' || v === 'pacote' ? v : null;
 }
+function coerceStatus(v: unknown): StatusRelacionamento | null {
+  return v === 'casado' ||
+    v === 'solteiro' ||
+    v === 'namorando' ||
+    v === 'morando junto' ||
+    v === 'separado' ||
+    v === 'viuvo'
+    ? v
+    : null;
+}
+function coerceFilhos(v: unknown): string | null {
+  return v === 'nao' || v === '1' || v === '2' || v === '3+' ? v : null;
+}
+/** string nao-vazia ou null */
+const str = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim() ? v.trim() : null;
+/** filtra a lista de sintomas pro conjunto valido, sem duplicar */
+function coerceSintomas(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const valid = new Set<string>(SINTOMAS);
+  return [...new Set(v.filter((x): x is string => typeof x === 'string' && valid.has(x)))];
+}
 
 /** Normaliza a resposta do modelo defensivamente (campos faltando viram null). */
 function normalize(raw: unknown): TriagemResult {
@@ -102,17 +254,32 @@ function normalize(raw: unknown): TriagemResult {
   const leadRaw = (o.lead ?? {}) as Record<string, unknown>;
   const posInt = (v: unknown) =>
     typeof v === 'number' && v > 0 ? Math.round(v) : null;
-  const freq = posInt(leadRaw.frequenciaSemanal);
-  const dur = posInt(leadRaw.duracaoMeses);
   return {
     resposta: typeof o.resposta === 'string' ? o.resposta : '',
     lead: {
-      nome: typeof leadRaw.nome === 'string' && leadRaw.nome.trim() ? leadRaw.nome.trim() : null,
+      nome: str(leadRaw.nome),
+      dataNascimento: str(leadRaw.dataNascimento),
+      email: str(leadRaw.email),
+      telefone: str(leadRaw.telefone),
+      contatoEmergencia: str(leadRaw.contatoEmergencia),
+      profissao: str(leadRaw.profissao),
+      disponibilidade: str(leadRaw.disponibilidade),
+      preferenciaAbordagem: str(leadRaw.preferenciaAbordagem),
       preferencia: coercePref(leadRaw.preferencia),
+      diagnostico: str(leadRaw.diagnostico),
+      terapiaAnterior: str(leadRaw.terapiaAnterior),
+      statusRelacionamento: coerceStatus(leadRaw.statusRelacionamento),
+      filhos: coerceFilhos(leadRaw.filhos),
+      vicios: str(leadRaw.vicios),
+      expectativa: str(leadRaw.expectativa),
+      motivacao: str(leadRaw.motivacao),
+      sintomas: coerceSintomas(leadRaw.sintomas),
+      notaFiscal: str(leadRaw.notaFiscal),
+      observacoes: str(leadRaw.observacoes),
+      resumo: str(leadRaw.resumo),
       modalidade: coerceModal(leadRaw.modalidade),
-      frequenciaSemanal: freq,
-      duracaoMeses: dur,
-      resumo: typeof leadRaw.resumo === 'string' && leadRaw.resumo.trim() ? leadRaw.resumo.trim() : null,
+      frequenciaSemanal: posInt(leadRaw.frequenciaSemanal),
+      duracaoMeses: posInt(leadRaw.duracaoMeses),
     },
     pronto: o.pronto === true,
   };

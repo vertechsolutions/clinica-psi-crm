@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Montserrat, DM_Sans } from 'next/font/google';
 import './globals.css';
 
@@ -15,8 +15,14 @@ const body = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: 'Painel da Clínica — Vertech',
-  description: 'Triagem inteligente no WhatsApp + distribuição de pacientes',
+  title: 'Clínica Cazule — Painel de Triagem (demo Vertech)',
+  description: 'Triagem inteligente no WhatsApp + distribuição de pacientes. Demonstração com dados fictícios.',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({
