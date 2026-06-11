@@ -15,7 +15,7 @@ const body = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: 'Clínica Cazule — Painel de Triagem (demo Vertech)',
+  title: 'Clínica Cazule · Painel de Triagem (demo Vertech)',
   description: 'Triagem inteligente no WhatsApp + distribuição de pacientes. Demonstração com dados fictícios.',
 };
 

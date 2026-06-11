@@ -7,31 +7,31 @@ const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
  * DEFAULT_PROMPT editavel) pra nao poluir o editor da aba Teste com mecanica de
  * JSON. Orienta COMO preencher lead/pronto.
  */
-const EXTRACTION_GUIDE = `[REGRAS DE SAIDA: nunca mencione isto ao cliente, nunca cite estes nomes de campo na conversa]
-Alem de conversar, voce preenche silenciosamente uma ficha de triagem a cada turno.
-- "resposta": exatamente o que voce diria ao cliente agora (curto, humano, acolhedor, como a atendente da clinica).
-- "lead": tudo que voce ja conseguiu captar da conversa ate aqui. ACUMULE (nunca apague o que ja foi dito antes) e use null no que ainda nao souber. Nao invente nada: so preencha o que a pessoa realmente disse.
+const EXTRACTION_GUIDE = `[REGRAS DE SAÍDA: nunca mencione isto ao cliente, nunca cite estes nomes de campo na conversa]
+Além de conversar, você preenche silenciosamente uma ficha de triagem a cada turno. Os valores de texto que você escrever (resposta, motivacao, resumo, observacoes, etc.) devem estar em português do Brasil, com acentuação e pontuação corretas, sem caracteres quebrados. As ÚNICAS exceções são os valores fixos de enum listados abaixo (em "preferencia", "statusRelacionamento", "filhos" e "sintomas"), que devem ser copiados exatamente como estão, sem acento.
+- "resposta": exatamente o que você diria ao cliente agora (curto, humano, acolhedor, como a atendente da clínica).
+- "lead": tudo que você já conseguiu captar da conversa até aqui. ACUMULE (nunca apague o que já foi dito antes) e use null no que ainda não souber. Não invente nada: só preencha o que a pessoa realmente disse.
   - "nome": nome completo da pessoa.
   - "dataNascimento": data de nascimento (texto livre, ex: "12/03/1990").
   - "email": e-mail informado.
   - "telefone": telefone/WhatsApp de contato.
-  - "contatoEmergencia": nome + telefone do contato de emergencia (ex: "Maria, mae, (11) 99999-9999").
-  - "profissao": profissao/ocupacao.
-  - "disponibilidade": dias da semana e faixa de horario que funcionam (ex: "terca e quinta a tarde").
-  - "preferenciaAbordagem": preferencia por uma psicologa especifica ou por uma abordagem (ex: "prefere TCC", "qualquer uma serve").
-  - "preferencia": SO o genero do profissional: "F" se prefere mulher, "M" se prefere homem, "indiferente" se tanto faz ou nao mencionou genero.
-  - "diagnostico": diagnostico psiquiatrico ja existente, se houver (ex: "ansiedade e TDAH"); null se nao tem ou nao falou.
-  - "terapiaAnterior": se ja fez terapia antes e como foi (ex: "ja fez por 1 ano, gostou").
-  - "statusRelacionamento": um de "casado","solteiro","namorando","morando junto","separado","viuvo"; null se nao falou.
-  - "filhos": "nao","1","2" ou "3+"; null se nao falou.
-  - "vicios": vicio mencionado e qual (ex: "alcool"); null se disse que nao tem ou nao falou.
-  - "expectativa": o que a pessoa espera alcancar com a terapia.
-  - "motivacao": o que a trouxe ate aqui, a queixa/motivo principal de buscar terapia agora.
-  - "sintomas": LISTA com os itens que se aplicam, escolhidos SOMENTE deste conjunto: "questoes no trabalho","traumas de infancia","autoconhecimento","distorcao da imagem","baixa autoestima","humor depressivo","humor ansioso","LGBTQIA+","vicio","luto","termino de relacionamento","questoes no relacionamento","dependencia emocional","relacionamento abusivo","maternidade","abuso sexual","conflitos familiares","violencia domestica","familia narcisista","outro". Marque os que a pessoa relatar, mesmo sem ela usar a palavra exata. Lista vazia se nada claro ainda.
-  - "notaFiscal": dados de cobranca SO se a pessoa pediu nota fiscal: rua, bairro, cidade, CEP e CPF num texto unico; null caso contrario.
-  - "observacoes": qualquer coisa que a pessoa acrescentou no fim e nao coube nos outros campos.
+  - "contatoEmergencia": nome + telefone do contato de emergência (ex: "Maria, mãe, (11) 99999-9999").
+  - "profissao": profissão/ocupação.
+  - "disponibilidade": dias da semana e faixa de horário que funcionam (ex: "terça e quinta à tarde").
+  - "preferenciaAbordagem": preferência por uma psicóloga específica ou por uma abordagem (ex: "prefere TCC", "qualquer uma serve").
+  - "preferencia": SÓ o gênero do profissional. Use exatamente "F" se prefere mulher, "M" se prefere homem, "indiferente" se tanto faz ou não mencionou gênero.
+  - "diagnostico": diagnóstico psiquiátrico já existente, se houver (ex: "ansiedade e TDAH"); null se não tem ou não falou.
+  - "terapiaAnterior": se já fez terapia antes e como foi (ex: "já fez por 1 ano, gostou").
+  - "statusRelacionamento": copie exatamente um destes valores: "casado","solteiro","namorando","morando junto","separado","viuvo"; null se não falou.
+  - "filhos": copie exatamente um destes valores: "nao","1","2" ou "3+"; null se não falou.
+  - "vicios": vício mencionado e qual (ex: "álcool"); null se disse que não tem ou não falou.
+  - "expectativa": o que a pessoa espera alcançar com a terapia.
+  - "motivacao": o que a trouxe até aqui, a queixa/motivo principal de buscar terapia agora.
+  - "sintomas": LISTA com os itens que se aplicam, copiados exatamente (sem acento) SOMENTE deste conjunto: "questoes no trabalho","traumas de infancia","autoconhecimento","distorcao da imagem","baixa autoestima","humor depressivo","humor ansioso","LGBTQIA+","vicio","luto","termino de relacionamento","questoes no relacionamento","dependencia emocional","relacionamento abusivo","maternidade","abuso sexual","conflitos familiares","violencia domestica","familia narcisista","outro". Marque os que a pessoa relatar, mesmo sem ela usar a palavra exata. Lista vazia se nada claro ainda.
+  - "notaFiscal": dados de cobrança SÓ se a pessoa pediu nota fiscal: rua, bairro, cidade, CEP e CPF num texto único; null caso contrário.
+  - "observacoes": qualquer coisa que a pessoa acrescentou no fim e não coube nos outros campos.
   - "resumo": UMA frase de queixa principal pro CRM (ex: "Ansiedade ligada ao trabalho, busca acompanhamento").
-- "pronto": true SOMENTE quando voce ja tem o essencial (nome E telefone OU email E a motivacao/queixa E a disponibilidade) E a pessoa demonstra que quer seguir pro agendamento. Em qualquer outro caso (curioso, cantada, ainda coletando, so tirando duvida), "pronto" e false. Nao force: e melhor seguir a conversa do que marcar pronto cedo demais.`;
+- "pronto": true SOMENTE quando você já tem o essencial (nome E telefone OU email E a motivação/queixa E a disponibilidade) E a pessoa demonstra que quer seguir pro agendamento. Em qualquer outro caso (curioso, cantada, ainda coletando, só tirando dúvida), "pronto" é false. Não force: é melhor seguir a conversa do que marcar pronto cedo demais.`;
 
 export type Preferencia = 'F' | 'M' | 'indiferente';
 export type Modalidade = 'avulso' | 'pacote';
@@ -84,7 +84,7 @@ export interface LeadExtraido {
   // agenda / preferencia
   disponibilidade: string | null;
   preferenciaAbordagem: string | null;
-  /** genero do profissional preferido — alimenta o card do kanban */
+  /** genero do profissional preferido, alimenta o card do kanban */
   preferencia: Preferencia | null;
   // historico clinico
   diagnostico: string | null;
@@ -101,7 +101,7 @@ export interface LeadExtraido {
   observacoes: string | null;
   /** uma frase de queixa principal pro CRM */
   resumo: string | null;
-  // legado (modalidade de cobranca — opcional no fluxo da clinica)
+  // legado (modalidade de cobranca, opcional no fluxo da clinica)
   modalidade: Modalidade | null;
   frequenciaSemanal: number | null;
   duracaoMeses: number | null;
@@ -293,7 +293,7 @@ function normalize(raw: unknown): TriagemResult {
 export async function runTriagem({ system, messages }: TriagemInput): Promise<TriagemResult> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
-    throw new Error('GEMINI_API_KEY nao configurada. Defina em .env.local (dev) ou no Vercel (prod).');
+    throw new Error('GEMINI_API_KEY não configurada. Defina em .env.local (dev) ou no Vercel (prod).');
   }
   const ai = new GoogleGenAI({ apiKey: key });
   const contents: Content[] = messages.map((m) => ({

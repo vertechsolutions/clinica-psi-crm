@@ -12,9 +12,9 @@ export async function POST(req: Request) {
     const friendly = /GEMINI_API_KEY/i.test(msg)
       ? msg
       : /503|UNAVAILABLE|overloaded/i.test(msg)
-        ? 'A assistente esta com muita demanda agora. Tenta de novo em alguns segundos.'
+        ? 'A assistente está com muita demanda agora. Tenta de novo em alguns segundos.'
         : /429|RESOURCE_EXHAUSTED|quota/i.test(msg)
-          ? 'Limite do plano gratis do Gemini atingido. Espera um pouco e tenta de novo.'
+          ? 'Limite do plano grátis do Gemini atingido. Espera um pouco e tenta de novo.'
           : msg;
     return Response.json({ error: friendly }, { status: 500 });
   }

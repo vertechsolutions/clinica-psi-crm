@@ -9,7 +9,7 @@ export function ArchivedView() {
     .filter((c) => isPassado(c.agendamentoIso))
     .sort((a, b) => (b.agendamentoIso ?? '').localeCompare(a.agendamentoIso ?? ''));
 
-  const nomePsi = (id: string | null) => psicologas.find((p) => p.id === id)?.nome ?? '—';
+  const nomePsi = (id: string | null) => psicologas.find((p) => p.id === id)?.nome ?? 'sem psicóloga';
 
   return (
     <div className="flex-1 overflow-y-auto p-4">

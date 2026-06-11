@@ -74,7 +74,7 @@ export function buildPacientes(): Paciente[] {
         motivacao: 'Perda de um familiar próximo há poucas semanas.',
         sintomas: ['luto', 'humor depressivo'], expectativa: 'Conseguir atravessar o luto com apoio.',
         preferenciaAbordagem: 'Prefere mulher.', disponibilidade: 'Sextas de manhã.',
-        contatoEmergencia: 'Irmã — (21) 95555-4444', telefone: '(21) 97777-6666',
+        contatoEmergencia: 'Irmã, (21) 95555-4444', telefone: '(21) 97777-6666',
         statusRelacionamento: 'casado', filhos: '2',
       },
     },
