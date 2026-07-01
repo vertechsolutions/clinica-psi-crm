@@ -1,8 +1,9 @@
 /**
- * Harness de calibracao da triagem.
- * Roda cenarios de conversa contra runTriagem() (mesma logica da /api/chat) e
- * avalia se a assistente: filtra curioso/cantada, extrai nome+preferencia+
- * modalidade(+freq), nao crava preco, e so marca `pronto` na hora certa.
+ * Harness de calibracao do raciocinio da assistente.
+ * Roda cenarios de conversa contra runTriagem() (mesma logica da /api/chat e do
+ * webhook do WhatsApp) e avalia se a assistente: filtra curioso/cantada, INFORMA
+ * os valores quando perguntada, oferece as abordagens, acolhe, extrai a ficha e
+ * so marca `pronto` na hora certa.
  *
  * Rodar:  npx tsx --env-file=.env.local scripts/test-triagem.ts
  */
@@ -34,21 +35,18 @@ interface Cenario {
 const ultimo = (t: Turno[]) => t[t.length - 1].res;
 const algumPronto = (t: Turno[]) => t.some((x) => x.res.pronto);
 const todasRespostas = (t: Turno[]) => t.map((x) => x.res.resposta).join('\n');
-// vazamento de preco: "R$ 150", "150 reais", "custa 200", "200 conto"
-const vazaPreco = (s: string) => /r\$\s?\d|\d{2,}\s*(reais|conto)|custa\s+\d{2,}/i.test(s);
+// informou valor: "R$ 75", "75 reais", "280", "avulsa", "pacote"
+const informaValor = (s: string) => /r\$\s?\d|\b(75|280)\b|avulsa|pacote/i.test(s);
+const citaAbordagem = (s: string) => /tcc|cognitivo|psican|humanist/i.test(s);
 
 const cenarios: Cenario[] = [
   {
     nome: 'curioso (so olhando)',
     falas: ['oi', 'to so dando uma olhada como funciona', 'ah entendi, depois eu volto'],
-    checar: (t) => {
-      const semPronto = !algumPronto(t);
-      const semPreco = !vazaPreco(todasRespostas(t));
-      return {
-        ok: semPronto && semPreco,
-        nota: `pronto=${algumPronto(t)} (esperado false) | vazouPreco=${!semPreco}`,
-      };
-    },
+    checar: (t) => ({
+      ok: !algumPronto(t),
+      nota: `pronto=${algumPronto(t)} (esperado false)`,
+    }),
   },
   {
     nome: 'cantada / pede foto',
@@ -57,6 +55,28 @@ const cenarios: Cenario[] = [
       ok: !algumPronto(t),
       nota: `pronto=${algumPronto(t)} (esperado false) | ultimaResposta="${ultimo(t).resposta.slice(0, 80)}"`,
     }),
+  },
+  {
+    nome: 'pergunta preco -> DEVE informar os valores',
+    falas: ['oi, queria saber quanto custa a sessao'],
+    checar: (t) => {
+      const informou = informaValor(todasRespostas(t));
+      return {
+        ok: informou,
+        nota: `informouValor=${informou} (esperado true) | resposta="${ultimo(t).resposta.slice(0, 120)}"`,
+      };
+    },
+  },
+  {
+    nome: 'pergunta abordagem -> DEVE citar TCC/psicanalise/humanista',
+    falas: ['oi, qual e a abordagem de voces?'],
+    checar: (t) => {
+      const citou = citaAbordagem(todasRespostas(t));
+      return {
+        ok: citou,
+        nota: `citouAbordagem=${citou} (esperado true) | resposta="${ultimo(t).resposta.slice(0, 120)}"`,
+      };
+    },
   },
   {
     nome: 'interessada ansiedade no trabalho',
@@ -116,17 +136,6 @@ const cenarios: Cenario[] = [
     },
   },
   {
-    nome: 'pergunta preco direto',
-    falas: ['oi, quanto custa a sessao?'],
-    checar: (t) => {
-      const semPreco = !vazaPreco(todasRespostas(t));
-      return {
-        ok: semPreco && !algumPronto(t),
-        nota: `vazouPreco=${!semPreco} | resposta="${ultimo(t).resposta.slice(0, 90)}"`,
-      };
-    },
-  },
-  {
     nome: 'indeciso',
     falas: ['oi', 'queria entender como funciona a terapia online', 'deixa eu pensar e te aviso'],
     checar: (t) => ({
@@ -139,7 +148,7 @@ const cenarios: Cenario[] = [
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function rodarCenario(c: Cenario): Promise<boolean> {
-  console.log(`\n[1m=== ${c.nome} ===[0m`);
+  console.log(`\n[1m=== ${c.nome} ===[0m`);
   const history: { role: 'user' | 'assistant'; content: string }[] = [];
   const turnos: Turno[] = [];
   for (const fala of c.falas) {
@@ -147,15 +156,12 @@ async function rodarCenario(c: Cenario): Promise<boolean> {
     const res = await runTriagem({ system: DEFAULT_PROMPT, messages: history });
     history.push({ role: 'assistant', content: res.resposta });
     turnos.push({ fala, res });
-    console.log(`  [36mpaciente:[0m ${fala}`);
-    console.log(`  [35massist:[0m   ${res.resposta}`);
-    console.log(
-      `            [90mlead=${JSON.stringify(res.lead)} pronto=${res.pronto}[0m`,
-    );
+    console.log(`  [36mpaciente:[0m ${fala}`);
+    console.log(`  [35massist:[0m   ${res.resposta}`);
     await sleep(1200); // suaviza rate limit do free tier
   }
   const { ok, nota } = c.checar(turnos);
-  console.log(ok ? `  [32mPASS[0m ${nota}` : `  [31mFAIL[0m ${nota}`);
+  console.log(ok ? `  [32mPASS[0m ${nota}` : `  [31mFAIL[0m ${nota}`);
   return ok;
 }
 
@@ -169,10 +175,10 @@ async function main() {
     try {
       if (await rodarCenario(c)) pass++;
     } catch (e) {
-      console.log(`  [31mERRO[0m ${e instanceof Error ? e.message : String(e)}`);
+      console.log(`  [31mERRO[0m ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  console.log(`\n[1mResultado: ${pass}/${cenarios.length} cenarios passaram[0m`);
+  console.log(`\n[1mResultado: ${pass}/${cenarios.length} cenarios passaram[0m`);
   process.exit(pass === cenarios.length ? 0 : 1);
 }
 
