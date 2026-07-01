@@ -5,7 +5,7 @@
     "watchPatterns": ["src/**", "public/**", "package.json", "next.config.ts"]
   },
   "deploy": {
-    "startCommand": "next start -p ${PORT:-3000}",
+    "startCommand": "next start",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
