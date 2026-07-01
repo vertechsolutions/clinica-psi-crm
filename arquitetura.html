@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mapa de Arquitetura (ADP)</title>
+<!--
+  MAPA-TEMPLATE do Agent-Driven Protocol.
+  O motor visual (CSS + JS abaixo) e FIXO e igual para todos os mapas.
+  Os DADOS vivem em window.ADP_MAP, no bloco <script id="adp-map-data"> mais abaixo.
+  O comando /adp-map troca SO esse bloco para mapear o proprio ADP OU um projeto
+  construido com o ADP (mesmo design, arquivos diferentes). Nunca edite o motor a mao
+  para mudar dados: edite so o objeto window.ADP_MAP.
+-->
+<style>
+  :root{
+    --bg:#0C0E13; --dot:#1C2130;
+    --box:#181C24; --box2:#1E232D; --edge:#3A4150;
+    --ink:#E7ECF3; --muted:#7E8798; --muted2:#5A6374;
+    --trigger:#C4F82A; --skill:#22D3EE; --gate:#FBBF24; --motor:#A78BFA;
+    --conv:#60A5FA; --mcp:#34D399; --hook:#F87171; --agent:#FB923C;
+    --file:#94A3B8; --merge:#4ADE80; --loop:#FBBF24; --feature:#F472B6;
+    --mono:ui-monospace,"Cascadia Code","JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+    --disp:"Georgia","Iowan Old Style",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  #stage{position:fixed;inset:0;overflow:hidden;cursor:grab;background-color:var(--bg);
+    background-image:radial-gradient(var(--dot) 1.4px, transparent 1.5px);background-size:26px 26px}
+  #stage.grabbing{cursor:grabbing}
+  #canvas{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}
+  #wires{position:absolute;top:0;left:0;overflow:visible;pointer-events:none}
+  .node{position:absolute}
+  .box{position:relative;border-radius:16px;background:linear-gradient(180deg,var(--box2),var(--box));
+    border:1px solid #2C3340;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 10px 26px -14px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.03);
+    cursor:pointer;transition:transform .12s, box-shadow .15s, border-color .15s}
+  .box .ico{font-size:29px;line-height:1}
+  .box::before{content:"";position:absolute;inset:0;border-radius:16px;
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--a) 34%, transparent);pointer-events:none}
+  .box::after{content:"";position:absolute;left:12px;right:12px;top:-1px;height:2px;border-radius:2px;
+    background:var(--a);opacity:.85;box-shadow:0 0 10px 0 var(--a)}
+  .node:hover .box{transform:translateY(-2px);border-color:color-mix(in srgb,var(--a) 60%,#2C3340);
+    box-shadow:0 16px 34px -14px rgba(0,0,0,.85), 0 0 0 1px color-mix(in srgb,var(--a) 45%,transparent)}
+  .node.sel .box{border-color:var(--a);box-shadow:0 0 0 2px color-mix(in srgb,var(--a) 70%,transparent),0 16px 34px -14px #000}
+  .cap{margin-top:9px;text-align:center;width:158px;margin-left:calc((var(--bw) - 158px)/2)}
+  .cap .t{font-weight:700;font-size:13.5px;color:var(--ink)}
+  .cap .f{font-family:var(--mono);font-size:9.5px;color:var(--muted);margin-top:2px;word-break:break-all;line-height:1.3}
+  .cap .f .more{color:var(--a);font-weight:700;margin-left:3px}
+  .cap .badge{display:inline-block;margin-top:4px;font-size:9.5px;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--a);background:color-mix(in srgb,var(--a) 14%,transparent);
+    border:1px solid color-mix(in srgb,var(--a) 30%,transparent);padding:1px 7px;border-radius:999px}
+  .node.sub .box{border-radius:13px}
+  .node.sub .scap{position:absolute;left:68px;top:50%;transform:translateY(-50%);width:150px}
+  .node.sub .scap .t{font-weight:600;font-size:12px;color:#CBD5E1;font-family:var(--mono)}
+  .node.sub .scap .f{font-size:9.5px;color:var(--muted2);margin-top:1px;word-break:break-all}
+  .port{position:absolute;width:11px;height:11px;border-radius:50%;background:#0C0E13;border:2px solid var(--edge);z-index:3}
+  .port.pin{left:-6px;top:50%;transform:translateY(-50%)}
+  .port.pout{right:-6px;top:50%;transform:translateY(-50%);border-color:var(--a)}
+  .port.pbot{left:50%;bottom:-6px;transform:translateX(-50%);border-color:var(--a);opacity:.85}
+  .port.ptop{left:50%;top:-6px;transform:translateX(-50%)}
+  .node.gate .box{background:linear-gradient(180deg,#241f10,#1a1710);border-color:#4a3d14}
+  .seclabel{position:absolute;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.14em;
+    text-transform:uppercase;color:#0C0E13;padding:4px 10px;border-radius:6px;z-index:2}
+  .elabel{position:absolute;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:6px;
+    background:#12151C;border:1px solid var(--edge);color:#CBD5E1;z-index:2;transform:translate(-50%,-50%);white-space:nowrap}
+  .elabel.ok{color:var(--merge);border-color:color-mix(in srgb,var(--merge) 40%,transparent)}
+  .elabel.no{color:var(--loop);border-color:color-mix(in srgb,var(--loop) 40%,transparent)}
+  .elabel.gen{color:var(--skill);border-color:color-mix(in srgb,var(--skill) 40%,transparent)}
+  .titlebar{position:fixed;top:18px;left:20px;z-index:20;pointer-events:none}
+  .titlebar .kick{font-family:var(--mono);color:var(--skill);font-size:11px;letter-spacing:.18em;text-transform:uppercase}
+  .titlebar h1{font-family:var(--disp);font-size:26px;font-weight:700;margin-top:2px}
+  .titlebar h1 span{color:var(--muted)}
+  .titlebar .meta{font-size:11.5px;color:var(--muted);margin-top:3px;max-width:560px}
+  .legend{position:fixed;top:18px;right:18px;z-index:20;background:rgba(14,17,23,.86);
+    border:1px solid #232935;border-radius:12px;padding:12px 14px;backdrop-filter:blur(8px)}
+  .legend h4{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  .legend .row{display:flex;align-items:center;gap:8px;font-size:12px;color:#CBD5E1;padding:2.5px 0}
+  .legend .dot{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+  .toolbar{position:fixed;bottom:20px;left:20px;z-index:20;display:flex;gap:8px;
+    background:rgba(14,17,23,.9);border:1px solid #232935;border-radius:12px;padding:7px;backdrop-filter:blur(8px)}
+  .toolbar button{width:38px;height:38px;border-radius:9px;border:1px solid #2A3140;background:#151922;
+    color:#CBD5E1;font-size:17px;cursor:pointer;transition:.12s;display:flex;align-items:center;justify-content:center}
+  .toolbar button:hover{background:#1E2530;border-color:var(--skill);color:#fff}
+  .toolbar .z{min-width:56px;font-family:var(--mono);font-size:12px;width:auto;padding:0 10px}
+  .hint{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:20;color:var(--muted2);
+    font-size:11.5px;font-family:var(--mono);pointer-events:none}
+  #insp{position:fixed;top:0;right:0;height:100%;width:352px;z-index:30;background:rgba(13,16,22,.97);
+    border-left:1px solid #232935;backdrop-filter:blur(10px);transform:translateX(100%);
+    transition:transform .22s cubic-bezier(.2,.7,.2,1);padding:24px 22px;overflow-y:auto}
+  #insp.open{transform:translateX(0)}
+  #insp .x{position:absolute;top:16px;right:16px;width:30px;height:30px;border-radius:8px;border:1px solid #2A3140;
+    background:#151922;color:#CBD5E1;cursor:pointer;font-size:16px}
+  #insp .ico{font-size:34px}
+  #insp .badge{display:inline-block;margin:10px 0 6px;font-size:10px;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--a);background:color-mix(in srgb,var(--a) 14%,transparent);
+    border:1px solid color-mix(in srgb,var(--a) 32%,transparent);padding:2px 9px;border-radius:999px}
+  #insp h3{font-family:var(--disp);font-size:22px;margin:4px 0 2px}
+  #insp .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:16px 0 7px}
+  #insp .file{font-family:var(--mono);font-size:11.5px;color:var(--skill);background:rgba(34,211,238,.08);
+    border:1px solid rgba(34,211,238,.2);border-radius:7px;padding:6px 9px;margin-bottom:6px;word-break:break-all}
+  #insp a.file{display:block;text-decoration:none;cursor:pointer;transition:.12s}
+  #insp a.file:hover{border-color:var(--skill);background:rgba(34,211,238,.18);color:#fff}
+  #insp a.file::before{content:"↗ ";opacity:.55}
+  #insp p{color:#CBD5E1;font-size:13.5px;line-height:1.55;margin:10px 0}
+  #insp .eng{display:flex;flex-direction:column;gap:6px}
+  #insp .eng span{font-family:var(--mono);font-size:11.5px;color:#CBD5E1;background:#12151C;border:1px solid #232935;border-radius:7px;padding:5px 9px}
+  .w-flow{stroke-dasharray:2 10;animation:flow 1.1s linear infinite}
+  @keyframes flow{to{stroke-dashoffset:-12}}
+</style>
+</head>
+<body>
+<div class="titlebar">
+  <div class="kick" id="tb-kick">Vertech · Agent-Driven Protocol</div>
+  <h1 id="tb-title">Mapa <span>/ canvas</span></h1>
+  <div class="meta">Cada no e uma peca real. Clique num no pra ver o nome da parte e os arquivos responsaveis por ela (dev e correcao isolados). Arraste pra mover · scroll pra zoom.</div>
+</div>
+<div class="legend" id="legend"></div>
+<div id="stage"><div id="canvas"><svg id="wires"></svg></div></div>
+<div class="toolbar">
+  <button id="fit" title="Ajustar a tela">⤢</button>
+  <button id="zin" title="Zoom in">+</button>
+  <button class="z" id="zlvl">100%</button>
+  <button id="zout" title="Zoom out">−</button>
+</div>
+<div class="hint">arraste o fundo · scroll pra zoom · clique num no pra ver os arquivos daquela parte</div>
+<aside id="insp">
+  <button class="x" id="ix">✕</button>
+  <div class="ico" id="i-ico">🔎</div>
+  <div class="badge" id="i-badge">skill</div>
+  <h3 id="i-title">titulo</h3>
+  <div class="lbl">Arquivo(s) responsavel(is)</div>
+  <div id="i-files"></div>
+  <p id="i-desc">descricao</p>
+  <div id="i-engwrap" style="display:none"><div class="lbl">Pendura / reaproveita</div><div class="eng" id="i-eng"></div></div>
+</aside>
+
+<!-- ============================================================= -->
+<!-- DADOS DO MAPA - o /adp-map troca SO este bloco (ADP ou projeto) -->
+<!-- ============================================================= -->
+<script id="adp-map-data">
+window.ADP_MAP = {
+  title: "Clinica Cazule · Assistente WhatsApp",
+  subtitle: "/ canvas",
+  baseDir: "C:/dev/clinica-psi-crm",
+  legend: [
+    ["ui","tela / UI"],["endpoint","endpoint / rota"],["webhook","webhook"],
+    ["service","service / modulo"],["integracao","integracao externa"],["db","banco / storage"]
+  ],
+  nodes: {
+    tela:{x:560,y:120,s:'m',cat:'ui',ico:'💬',t:'tela de calibragem',files:['src/app/page.tsx','src/components/assistant/chat-panel.tsx','src/components/assistant/prompt-config.tsx','src/components/assistant/ficha-triagem.tsx'],d:'Tela unica: chat de teste do assistente + editor do raciocinio (system prompt) + ficha extraida. O que se salva aqui vira o comportamento do WhatsApp.'},
+
+    chat:{x:150,y:340,s:'m',cat:'endpoint',ico:'⚡',t:'/api/chat',files:['src/app/api/chat/route.ts'],d:'Endpoint da tela de teste: recebe {system, messages} e roda a triagem (Gemini). Nao persiste — so pra calibrar.'},
+    config:{x:420,y:340,s:'m',cat:'endpoint',ico:'🔧',t:'/api/config',files:['src/app/api/config/route.ts'],d:'GET/POST do raciocinio ativo (o que o webhook usa). Protegido por x-admin-key. POST salva no banco.'},
+    health:{x:660,y:340,s:'s',cat:'endpoint',ico:'❤️',t:'/api/health',files:['src/app/api/health/route.ts'],d:'Healthcheck do Railway (deploy.healthcheckPath).'},
+    admin:{x:850,y:340,s:'m',cat:'endpoint',ico:'🗑️',t:'/api/admin/patient',files:['src/app/api/admin/patient/route.ts'],d:'DELETE dos dados de um paciente por numero (LGPD Art. 18 — apagamento). Protegido por x-admin-key.'},
+    webhook:{x:1160,y:340,s:'g',cat:'webhook',ico:'📥',t:'/api/whatsapp/webhook',files:['src/app/api/whatsapp/webhook/route.ts'],d:'GET verifica (hub.challenge) e POST recebe mensagem. Valida assinatura X-Hub-Signature-256 (fail-closed), dedup por wamid, processa via after() e responde 200 na hora.'},
+
+    triagem:{x:150,y:570,s:'m',cat:'service',ico:'🧠',t:'triagem (Gemini)',files:['src/lib/triagem.ts','src/lib/default-prompt.ts'],d:'runTriagem: chama o Gemini com structured output {resposta, lead, pronto}. Persona Camila + regras de extracao + defesa anti prompt-injection. Ficha de 18 campos.'},
+    auth:{x:560,y:570,s:'s',cat:'service',ico:'🔑',t:'auth',files:['src/lib/auth.ts'],d:'isAdmin: valida x-admin-key contra ADMIN_API_KEY em tempo constante. Fail-closed em producao.'},
+    maint:{x:850,y:570,s:'m',cat:'service',ico:'🧹',t:'maintenance (LGPD)',files:['src/lib/maintenance.ts'],d:'Retencao 90d/30d + exclusao do titular. Roda no boot e a cada 24h.'},
+    conv:{x:1160,y:570,s:'m',cat:'service',ico:'🔀',t:'conversation',files:['src/lib/conversation.ts'],d:'Orquestra o turno: carrega historico + prompt ativo, chama a triagem, dedup, e persiste a resposta so APOS enviar ao WhatsApp.'},
+    whats:{x:1470,y:450,s:'m',cat:'service',ico:'🟢',t:'whatsapp client',files:['src/lib/whatsapp.ts'],d:'Client da Graph API v25.0: sendText, markReadAndType, isValidSignature (HMAC). Loga erro sem vazar dado do paciente.'},
+
+    db:{x:700,y:790,s:'m',cat:'service',ico:'🗃️',t:'db (pool)',files:['src/lib/db.ts'],d:'Pool pg lazy singleton (globalThis). SSL off na rede interna do Railway. query parametrizada + withTransaction.'},
+    schema:{x:940,y:790,s:'s',cat:'service',ico:'📐',t:'schema',files:['src/lib/schema.ts'],d:'CREATE TABLE IF NOT EXISTS (advisory lock): wa_conversations, wa_messages (UNIQUE wamid), app_config.'},
+    boot:{x:1160,y:790,s:'m',cat:'service',ico:'🚀',t:'instrumentation',files:['src/instrumentation.ts'],d:'register() no boot: inicializa o schema e agenda a limpeza LGPD. Alerta se faltar APP_SECRET/ADMIN_API_KEY.'},
+
+    postgres:{x:700,y:980,s:'g',cat:'db',ico:'🐘',t:'Postgres (Railway)',files:['src/lib/schema.ts'],d:'wa_conversations (ficha por numero) · wa_messages (historico + dedup) · app_config (raciocinio ativo).'},
+
+    gemini:{x:150,y:790,s:'m',cat:'integracao',ico:'✨',t:'Google Gemini',files:['src/lib/triagem.ts'],d:'gemini-2.5-flash (free tier), structured output. GEMINI_API_KEY.'},
+    meta:{x:1470,y:200,s:'m',cat:'integracao',ico:'📲',t:'WhatsApp Cloud API',files:['src/lib/whatsapp.ts'],d:'Meta Graph API v25.0. Numero +55 61 94756-9216, Phone Number ID 1121282344409820. Recebe msg no webhook, recebe envio do client.'}
+  },
+  edges: [
+    ['tela','chat','main','testa'],
+    ['tela','config','main','salva raciocinio'],
+    ['chat','triagem','main'],
+    ['triagem','gemini','main','chama'],
+    ['config','conv','sub','get/set prompt'],
+    ['config','auth','sub','protege'],
+    ['admin','auth','sub','protege'],
+    ['admin','maint','main'],
+    ['meta','webhook','webhook','recebe msg'],
+    ['webhook','conv','main'],
+    ['webhook','whats','main','responde'],
+    ['webhook','db','sub','dedup'],
+    ['whats','meta','main','Graph API'],
+    ['conv','triagem','main'],
+    ['conv','db','main','persiste'],
+    ['maint','db','sub','retencao'],
+    ['db','postgres','main'],
+    ['schema','postgres','gen','cria tabelas'],
+    ['boot','schema','main','boot'],
+    ['boot','maint','flow','agenda']
+  ],
+  sections: [
+    {x:560,y:70,t:'interface',c:'#C084FC'},
+    {x:150,y:290,t:'endpoints / webhook',c:'#38BDF8'},
+    {x:150,y:520,t:'logica / servicos',c:'#818CF8'},
+    {x:700,y:740,t:'dados / boot',c:'#10B981'},
+    {x:1470,y:150,t:'integracoes externas',c:'#F59E0B'}
+  ]
+};
+</script>
+
+<!-- ============================================================= -->
+<!-- MOTOR VISUAL - fixo, nao editar para mudar dados -->
+<!-- ============================================================= -->
+<script>
+const CAT = {
+  trigger:{c:'#C4F82A',l:'comando / trigger'}, skill:{c:'#22D3EE',l:'skill do protocolo'},
+  gate:{c:'#FBBF24',l:'gate humano'}, motor:{c:'#A78BFA',l:'motor reaproveitado'},
+  conv:{c:'#60A5FA',l:'convencao de arquitetura'}, mcp:{c:'#34D399',l:'MCP'}, hook:{c:'#F87171',l:'hook / guardrail'},
+  agent:{c:'#FB923C',l:'subagente'}, file:{c:'#94A3B8',l:'arquivo / template'}, merge:{c:'#4ADE80',l:'entrega'},
+  // categorias do mapa de PROJETO (o /adp-map modo B usa estas):
+  feature:{c:'#F472B6',l:'feature'}, endpoint:{c:'#38BDF8',l:'endpoint / rota'}, webhook:{c:'#FB7185',l:'webhook'},
+  integracao:{c:'#F59E0B',l:'integracao externa'}, service:{c:'#818CF8',l:'service / modulo'},
+  repository:{c:'#2DD4BF',l:'repository'}, db:{c:'#10B981',l:'banco / storage'}, ui:{c:'#C084FC',l:'tela / UI'},
+  module:{c:'#60A5FA',l:'modulo'}, doc:{c:'#94A3B8',l:'documento'}
+};
+const SIZE = {m:88, g:88, s:58};
+const MAP = window.ADP_MAP;
+const N = MAP.nodes, E = MAP.edges, SEC = MAP.sections;
+for(const k in N){ const n=N[k]; n.w=SIZE[n.s]||88; n.h=SIZE[n.s]||88; }
+
+// arquivos como caminho absoluto (baseDir + relativo) + hyperlink pra abrir o arquivo
+const BASE = (MAP.baseDir||'').replace(/[\\/]+$/,'');
+const BS = String.fromCharCode(92);
+function absText(p){ return BASE ? (BASE + '/' + p).split('/').join(BS) : p; }
+function fileUrl(p){ return 'file:///' + BASE + '/' + p; }
+function fileRow(f){
+  const desc = f.indexOf('plugin:')===0 || f.indexOf('MCP:')===0 || f.indexOf('git')===0 || f.indexOf(' · ')>=0;
+  if(desc || !BASE) return '<div class="file">'+f+'</div>';
+  const path = f.split(' (')[0], extra = f.slice(path.length);
+  return '<a class="file" href="'+fileUrl(path)+'" title="abrir o arquivo">'+absText(path)+extra+'</a>';
+}
+
+// titlebar + legenda a partir dos dados
+document.getElementById('tb-title').innerHTML = (MAP.title||'Mapa') + ' <span>' + (MAP.subtitle||'/ canvas') + '</span>';
+document.title = (MAP.title||'Mapa') + ' - arquitetura';
+const legendEl = document.getElementById('legend');
+legendEl.innerHTML = '<h4>Legenda</h4>' + (MAP.legend||[]).map(([cat,label])=>{
+  const c = (CAT[cat]||{}).c || '#94A3B8';
+  return `<div class="row"><span class="dot" style="background:${c}"></span>${label}</div>`;
+}).join('');
+
+const canvas=document.getElementById('canvas'), svg=document.getElementById('wires'), NS='http://www.w3.org/2000/svg';
+svg.innerHTML = `<defs>
+  <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6B7482"/></marker>
+  <marker id="arwL" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#FBBF24"/></marker>
+  <marker id="arwF" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#C4F82A"/></marker>
+  <marker id="arwC" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#22D3EE"/></marker>
+</defs>`;
+function port(n,s){ if(s==='r')return[n.x+n.w,n.y+n.h/2]; if(s==='l')return[n.x,n.y+n.h/2]; if(s==='b')return[n.x+n.w/2,n.y+n.h]; return[n.x+n.w/2,n.y]; }
+function addPath(d,cls,marker,color){ const p=document.createElementNS(NS,'path'); p.setAttribute('d',d); p.setAttribute('fill','none'); p.setAttribute('stroke',color); p.setAttribute('class',cls); if(marker)p.setAttribute('marker-end',`url(#${marker})`); svg.appendChild(p); return p; }
+function dot(x,y,color){ const c=document.createElementNS(NS,'circle'); c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r',3.2); c.setAttribute('fill','#0C0E13'); c.setAttribute('stroke',color); c.setAttribute('stroke-width','2'); svg.appendChild(c); }
+function mkLabel(x,y,txt,cls){ const el=document.createElement('div'); el.className='elabel '+(cls||''); el.style.left=x+'px'; el.style.top=y+'px'; el.textContent=txt; canvas.appendChild(el); }
+E.forEach(([a,b,t,lab])=>{
+  const from=N[a], to=N[b]; if(!from||!to) return; let d;
+  if(t==='sub' || t==='gen'){
+    const A=port(from,'b'), B=port(to,'t'); const k=Math.max(24,(B[1]-A[1])*0.5);
+    d=`M${A[0]} ${A[1]} C ${A[0]} ${A[1]+k}, ${B[0]} ${B[1]-k}, ${B[0]} ${B[1]}`;
+    const col = t==='gen'?'#22D3EE':'#3C4353';
+    const p=addPath(d, t==='gen'?'w-gen':'w-sub', t==='gen'?'arwC':'arw', col);
+    p.setAttribute('stroke-dasharray', t==='gen'?'5 4':'2 5'); p.setAttribute('stroke-width', t==='gen'?'1.8':'1.5');
+    dot(A[0],A[1],col); if(t==='gen'){ dot(B[0],B[1],col); if(lab) mkLabel((A[0]+B[0])/2,(A[1]+B[1])/2,lab,'gen'); }
+    return;
+  }
+  if(t==='loop'){
+    const A=port(from,'b'), B=port(to,'b'); const dip=Math.max(A[1],B[1])+120;
+    d=`M${A[0]} ${A[1]} C ${A[0]} ${dip}, ${B[0]} ${dip}, ${B[0]} ${B[1]}`;
+    const p=addPath(d,'w-loop','arwL','#FBBF24'); p.setAttribute('stroke-width','1.8'); p.setAttribute('stroke-dasharray','6 4');
+    dot(A[0],A[1],'#FBBF24'); dot(B[0],B[1],'#FBBF24'); if(lab) mkLabel((A[0]+B[0])/2, dip-4, lab, 'no'); return;
+  }
+  const A=port(from,'r'), B=port(to,'l'); const k=Math.max(46,Math.abs(B[0]-A[0])*0.5);
+  d=`M${A[0]} ${A[1]} C ${A[0]+k} ${A[1]}, ${B[0]-k} ${B[1]}, ${B[0]} ${B[1]}`;
+  const col = t==='flow'?'#7C9A1E':'#485062', mk = t==='flow'?'arwF':'arw';
+  const base=addPath(d,'w-main',mk,col); base.setAttribute('stroke-width','2.4');
+  if(t==='main'){ const fl=addPath(d,'w-flow',null,'#22D3EE'); fl.setAttribute('stroke-width','2.4'); fl.setAttribute('opacity','.9'); }
+  dot(A[0],A[1], t==='flow'?'#C4F82A':'#22D3EE'); dot(B[0],B[1],'#485062');
+  if(lab) mkLabel((A[0]+B[0])/2, A[1]-14, lab, 'ok');
+});
+(SEC||[]).forEach(s=>{ const el=document.createElement('div'); el.className='seclabel'; el.style.left=s.x+'px'; el.style.top=s.y+'px'; el.style.background=s.c; el.textContent=s.t; canvas.appendChild(el); });
+for(const k in N){
+  const n=N[k], cat=CAT[n.cat]||CAT.file;
+  const el=document.createElement('div');
+  el.className='node'+(n.s==='s'?' sub':'')+(n.cat==='gate'?' gate':'');
+  el.style.left=n.x+'px'; el.style.top=n.y+'px'; el.style.setProperty('--a',cat.c); el.style.setProperty('--bw',n.w+'px');
+  const files = n.files||[];
+  const ports = n.s==='s' ? `<span class="port ptop"></span>` : `<span class="port pin"></span><span class="port pout"></span>`+((n.e||files.length>1)?`<span class="port pbot"></span>`:'');
+  const box=`<div class="box" style="width:${n.w}px;height:${n.h}px"><span class="ico">${n.ico||'▪'}</span>${ports}</div>`;
+  const fmore = files.length>1 ? `<span class="more">+${files.length-1}</span>` : '';
+  const f0 = files[0]||'';
+  if(n.s==='s'){
+    el.innerHTML = box + `<div class="scap"><div class="t">${n.t}</div><div class="f">${f0}${fmore}</div></div>`;
+  } else {
+    const badge = n.cat==='gate'?'<div class="badge">gate humano</div>':(n.cat==='trigger'?'<div class="badge">trigger</div>':(n.cat==='merge'?'<div class="badge">entrega</div>':(n.cat==='file'?'<div class="badge">arquivo</div>':(n.cat==='feature'?'<div class="badge">feature</div>':''))));
+    el.innerHTML = box + `<div class="cap"><div class="t">${n.t}</div><div class="f">${f0}${fmore}</div>${badge}</div>`;
+  }
+  el.addEventListener('click',ev=>{ ev.stopPropagation(); openInsp(k, el); });
+  canvas.appendChild(el);
+}
+const insp=document.getElementById('insp');
+function openInsp(k,el){
+  const n=N[k], cat=CAT[n.cat]||CAT.file;
+  document.querySelectorAll('.node.sel').forEach(x=>x.classList.remove('sel')); el.classList.add('sel');
+  insp.style.setProperty('--a',cat.c);
+  document.getElementById('i-ico').textContent=n.ico||'▪';
+  document.getElementById('i-badge').textContent=cat.l;
+  document.getElementById('i-title').textContent=n.t;
+  document.getElementById('i-files').innerHTML = (n.files||[]).map(fileRow).join('');
+  document.getElementById('i-desc').textContent=n.d||'';
+  const ew=document.getElementById('i-engwrap'), eg=document.getElementById('i-eng');
+  if(n.e){ ew.style.display='block'; eg.innerHTML=n.e.map(x=>`<span>${x}</span>`).join(''); } else ew.style.display='none';
+  insp.classList.add('open');
+}
+document.getElementById('ix').onclick=()=>{ insp.classList.remove('open'); document.querySelectorAll('.node.sel').forEach(x=>x.classList.remove('sel')); };
+let scale=1,tx=0,ty=0;
+const stage=document.getElementById('stage'), zlvl=document.getElementById('zlvl');
+function apply(){ canvas.style.transform=`translate(${tx}px,${ty}px) scale(${scale})`; zlvl.textContent=Math.round(scale*100)+'%'; }
+function bounds(){ let a=1e9,b=1e9,c=-1e9,d=-1e9; for(const k in N){const n=N[k]; a=Math.min(a,n.x); b=Math.min(b,n.y-46); c=Math.max(c,n.x+190); d=Math.max(d,n.y+n.h+34);} return {a,b,c,d}; }
+function fit(){ const bb=bounds(),w=innerWidth,h=innerHeight,cw=bb.c-bb.a,ch=bb.d-bb.b; scale=Math.min((w-80)/cw,(h-150)/ch,1.4); tx=(w-cw*scale)/2-bb.a*scale; ty=(h-ch*scale)/2-bb.b*scale+12; apply(); }
+stage.addEventListener('wheel',e=>{ e.preventDefault(); const f=e.deltaY<0?1.12:0.89; const r=stage.getBoundingClientRect(); const mx=e.clientX-r.left,my=e.clientY-r.top; const ns=Math.min(2.4,Math.max(.2,scale*f)),k=ns/scale; tx=mx-(mx-tx)*k; ty=my-(my-ty)*k; scale=ns; apply(); },{passive:false});
+let drag=false,sx,sy;
+stage.addEventListener('mousedown',e=>{ if(e.target.closest('.node'))return; drag=true; sx=e.clientX-tx; sy=e.clientY-ty; stage.classList.add('grabbing'); });
+window.addEventListener('mousemove',e=>{ if(!drag)return; tx=e.clientX-sx; ty=e.clientY-sy; apply(); });
+window.addEventListener('mouseup',()=>{ drag=false; stage.classList.remove('grabbing'); });
+stage.addEventListener('click',e=>{ if(!e.target.closest('.node')){ insp.classList.remove('open'); document.querySelectorAll('.node.sel').forEach(x=>x.classList.remove('sel')); } });
+document.getElementById('zin').onclick=()=>{ scale=Math.min(2.4,scale*1.15); apply(); };
+document.getElementById('zout').onclick=()=>{ scale=Math.max(.2,scale*0.87); apply(); };
+document.getElementById('fit').onclick=fit;
+fit();
+</script>
+</body>
+</html>
