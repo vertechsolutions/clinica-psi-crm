@@ -14,14 +14,11 @@ interface AssistantState {
   loading: boolean;
   /** ultimo lead extraido pela triagem (acumulado ao longo da conversa) */
   ultimoLead: LeadExtraido | null;
-  /** trava de idempotencia: card ja foi criado pra esta conversa */
-  leadCriado: boolean;
   setSystemPrompt: (p: string) => void;
   loadPrompt: () => void;
   push: (m: Msg) => void;
   setLoading: (b: boolean) => void;
   setUltimoLead: (l: LeadExtraido) => void;
-  setLeadCriado: (b: boolean) => void;
   reset: () => void;
 }
 
@@ -46,7 +43,6 @@ export const useAssistant = create<AssistantState>((set) => ({
   systemPrompt: DEFAULT_PROMPT,
   loading: false,
   ultimoLead: null,
-  leadCriado: false,
   setSystemPrompt: (p) => {
     persist(p);
     set({ systemPrompt: p });
@@ -87,6 +83,5 @@ export const useAssistant = create<AssistantState>((set) => ({
   push: (m) => set((s) => ({ messages: [...s.messages, m] })),
   setLoading: (b) => set({ loading: b }),
   setUltimoLead: (l) => set({ ultimoLead: l }),
-  setLeadCriado: (b) => set({ leadCriado: b }),
-  reset: () => set({ messages: [], ultimoLead: null, leadCriado: false }),
+  reset: () => set({ messages: [], ultimoLead: null }),
 }));
