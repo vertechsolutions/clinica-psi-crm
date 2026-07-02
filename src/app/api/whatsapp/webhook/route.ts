@@ -1,6 +1,6 @@
 import { after } from 'next/server';
 import { getVerifyToken, isValidSignature, markReadAndType, sendText } from '@/lib/whatsapp';
-import { recordUserMessage, computeReply, persistReply } from '@/lib/conversation';
+import { recordUserMessage, computeReply, persistReply, type TurnoResposta } from '@/lib/conversation';
 import { hasDb } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -9,6 +9,17 @@ export const dynamic = 'force-dynamic';
 /** Pedido a quem manda áudio/mídia — a clínica atende por texto no primeiro contato. */
 const PEDE_TEXTO =
   'Oi! Consigo te ajudar melhor por aqui escrevendo. Pode me mandar por texto o que você precisa? 🙂';
+const FALHA_TEMPORARIA =
+  'Tive uma instabilidade aqui agora. Pode me mandar a mensagem de novo em alguns segundos?';
+
+async function sendFallback(to: string, err: unknown): Promise<void> {
+  console.error('[webhook] erro ao gerar resposta', err);
+  try {
+    await sendText(to, FALHA_TEMPORARIA);
+  } catch (fallbackErr) {
+    console.error('[webhook] erro ao enviar fallback', fallbackErr);
+  }
+}
 
 /**
  * Verificação do webhook (Meta chama ao configurar o Callback URL no App Dashboard).
@@ -74,9 +85,19 @@ export async function POST(req: Request): Promise<Response> {
         const isNew = await recordUserMessage(from, texto, wamid);
         if (!isNew) return; // reentrega da Meta: já processada
         await markReadAndType(wamid);
-        const turno = await computeReply(from);
+        let turno: TurnoResposta;
+        try {
+          turno = await computeReply(from);
+        } catch (err) {
+          await sendFallback(from, err);
+          return;
+        }
         await sendText(from, turno.resposta); // se falhar, lança e não persiste a resposta
-        await persistReply(from, nome, turno); // grava só depois de entregar
+        try {
+          await persistReply(from, nome, turno); // grava só depois de entregar
+        } catch (err) {
+          console.error('[webhook] erro ao persistir resposta', err);
+        }
       } else {
         // áudio/imagem/documento/etc: dedup pelo wamid e pede texto
         const isNew = await recordUserMessage(from, `[${msg.type}]`, wamid);
