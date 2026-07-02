@@ -6,14 +6,12 @@ import { hasDb } from '@/lib/db';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** Pedido a quem manda áudio/mídia — a clínica atende por texto no primeiro contato. */
+// Pedido a quem manda audio/midia - a clinica atende por texto no primeiro contato.
 const PEDE_TEXTO =
-  'Oi! Consigo te ajudar melhor por aqui escrevendo. Pode me mandar por texto o que você precisa? 🙂';
+  'Oi! Consigo te ajudar melhor por aqui escrevendo. Pode me mandar por texto o que voce precisa? 🙂';
 
-/**
- * Verificação do webhook (Meta chama ao configurar o Callback URL no App Dashboard).
- * Responde o hub.challenge cru quando o verify_token bate.
- */
+// Verificacao do webhook (Meta chama ao configurar o Callback URL no App Dashboard).
+// Responde o hub.challenge cru quando o verify_token bate.
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const mode = url.searchParams.get('hub.mode');
@@ -26,16 +24,8 @@ export async function GET(req: Request): Promise<Response> {
   return new Response('Forbidden', { status: 403 });
 }
 
-/**
- * Recebe eventos do WhatsApp. Valida a assinatura, ignora status de entrega, e
- * processa a mensagem do usuário DEPOIS de responder 200 (via after()) — a Meta
- * reenvia se não receber 200 rápido, e a dedup por wamid cobre reentregas.
- *
- * Limitação conhecida (aceitável no piloto): a dedup cobre reentregas da Meta,
- * mas não um crash do processo no meio do after() (após o 200). Nesse caso raro,
- * a mensagem do usuário fica gravada sem resposta. Pra volume de clínica pequena
- * o risco é baixo; uma fila durável (Redis/Postgres job) resolveria numa evolução.
- */
+// Recebe eventos do WhatsApp. Valida a assinatura, ignora status de entrega, e
+// processa a mensagem do usuario DEPOIS de responder 200 (via after()).
 export async function POST(req: Request): Promise<Response> {
   const raw = await req.text();
 
@@ -56,9 +46,9 @@ export async function POST(req: Request): Promise<Response> {
   // status de entrega (sent/delivered/read) ou evento sem mensagem: nada a fazer
   if (!msg) return new Response('ok', { status: 200 });
 
-  // sem banco não há como manter contexto nem deduplicar: aceita e loga
+  // sem banco nao ha como manter contexto nem deduplicar: aceita e loga
   if (!hasDb) {
-    console.warn('[webhook] mensagem recebida mas DATABASE_URL ausente — ignorada.');
+    console.warn('[webhook] mensagem recebida mas DATABASE_URL ausente - ignorada.');
     return new Response('ok', { status: 200 });
   }
 
@@ -72,13 +62,12 @@ export async function POST(req: Request): Promise<Response> {
         const texto = msg.text?.body?.trim();
         if (!texto) return;
         const isNew = await recordUserMessage(from, texto, wamid);
-        if (!isNew) return; // reentrega da Meta: já processada
+        if (!isNew) return;
         await markReadAndType(wamid);
         const turno = await computeReply(from);
-        await sendText(from, turno.resposta); // se falhar, lança e não persiste a resposta
-        await persistReply(from, nome, turno); // grava só depois de entregar
+        await sendText(from, turno.resposta);
+        await persistReply(from, nome, turno);
       } else {
-        // áudio/imagem/documento/etc: dedup pelo wamid e pede texto
         const isNew = await recordUserMessage(from, `[${msg.type}]`, wamid);
         if (!isNew) return;
         await markReadAndType(wamid);
@@ -92,7 +81,6 @@ export async function POST(req: Request): Promise<Response> {
   return new Response('ok', { status: 200 });
 }
 
-// ---- tipos mínimos do payload do WhatsApp que a gente usa ----
 interface WebhookPayload {
   entry?: Array<{
     changes?: Array<{
