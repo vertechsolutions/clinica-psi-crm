@@ -1,0 +1,141 @@
+# Contexto — Clínica Cazule · Assistente Camila (WhatsApp)
+
+Este documento é o handoff de uma sessão de trabalho (Claude no Cowork) para outra
+sessão (Claude Code no terminal, com acesso ao Railway). Use como contexto de
+projeto e como checklist antes do deploy.
+
+## Quem é quem
+
+- **Bruna** — psicóloga, atendente da recepção da Clínica Cazule (clínica de psicologia com 8 psicólogas). Cliente final.
+- **Camila** — a atendente **virtual** (IA). Nome fictício, personifica a recepção da clínica no WhatsApp.
+- **Murilo (você)** — CTO do projeto (Vertech).
+- **WhatsApp de teste** — WhatsApp Cloud API, número da clínica (`WHATSAPP_PHONE_NUMBER_ID=1121282344409820`).
+- **Notificações de handoff (fase de teste)** — devem chegar no WhatsApp da Bruna (`+55 27 98117-8233`) e no seu (`+55 49 99955-1051`).
+
+## Arquitetura
+
+- Next.js 16 (App Router, `--webpack`) + React 19 + Tailwind 4
+- IA: **Google Gemini 2.5 Flash** (`@google/genai`) — conversa + triagem estruturada
+- Transcrição de áudio: Gemini multimodal (arquivo `src/lib/transcribe.ts`)
+- Banco: **Postgres** (Railway) via `pg` — schema criado no boot pelo `instrumentation.ts`
+- Mensageria: **WhatsApp Cloud API v25.0** (Graph API) — cliente em `src/lib/whatsapp.ts`
+- Deploy: **Railway** com auto-deploy no push pra `master` (repo `vertechsolutions/clinica-psi-crm`)
+
+Tabelas Postgres:
+- `wa_conversations (wa_id PK, nome, lead JSONB, pronto, pausada, pausada_em, created_at, updated_at)`
+- `wa_messages (id, wa_id, role, content, wamid UNIQUE, created_at)`
+- `app_config (key PK, value, updated_at)` — chave `system_prompt` sobrescreve o `DEFAULT_PROMPT` do código
+
+## Demandas da Bruna (reunião 08/07/2026)
+
+1. **Interpretar áudio dos pacientes** — clínica atende só por texto, mas paciente às vezes manda áudio. Transcrever e tratar como texto.
+2. **Planilha no Google Drive** com horários das psicólogas (integração pra IA consultar).
+3. **Proatividade / follow-up** — reengajar leads que sumiram (mensagem 7 do FAQ da Bruna).
+4. **Enviar formulário DEPOIS do pagamento** (não antes).
+5. **Criar email** `camila@vertechsolucoes.com.br` pra receber a planilha compartilhada.
+6. **FAQ** — Bruna mandou PDF com 19 perguntas/respostas (arquivo `Documento sem título (8).pdf` na raiz).
+7. **Respostas mais curtas** — se longa, quebrar em várias.
+8. **Desligar IA após enviar form** — pausa e notifica Bruna + você no WhatsApp.
+
+## O que já foi implementado (Cowork, 14/07/2026)
+
+Todas as mudanças estão neste commit local, **ainda não pushadas**:
+
+### Áudio (item 1)
+- **NOVO `src/lib/transcribe.ts`** — `transcribeAudio(bytes, mimeType)` via Gemini multimodal. Modelo configurável por `GEMINI_TRANSCRIBE_MODEL` (default cai no `GEMINI_MODEL`). Limite inline 15MB. Retorna `null` em falha (não lança).
+- **`src/lib/whatsapp.ts`** — adicionadas duas funções:
+  - `downloadMedia(mediaId)` — 2 passos (GET `/{media_id}` pra URL assinada, GET nessa URL). Retorna `{bytes, mimeType}` ou `null`.
+  - `sendInternalAlert(to, body)` — envia mensagem interna (best-effort, não lança).
+- **`src/app/api/whatsapp/webhook/route.ts`** — detecta `msg.type === 'audio' | 'voice'`, baixa, transcreve, injeta no histórico como `[áudio transcrito]: <texto>`. Fallback pede texto se transcrição falhar.
+
+### FAQ da Bruna incorporado (itens 6, 7, 4)
+- **`src/lib/default-prompt.ts`** — reescrito com:
+  - Abertura da Bruna: "Seja bem-vindo(a) à Cazule. Me chamo Camila… individual ou casal?"
+  - Valores individual: R$75 avulsa / R$280 pacote / R$150 quinzenal / 45min
+  - Valores casal: R$150 avulsa / R$550 pacote / 50min
+  - Infanto-juvenil 13+ (primeira sessão só com responsável)
+  - Terapia de casal em 3 fases
+  - Nota Fiscal, Relatório, Atestado (com regras), Declaração de comparecimento
+  - Não aceita plano de saúde direto (só reembolso via NF)
+  - Não faz sessão experimental
+  - **Regra de resposta curta**: 1–3 frases, ≤400 chars, quebrar em vários turnos
+  - **Fluxo do form**: só envia DEPOIS do comprovante
+  - Mensagem de retenção (mensagem 7 do FAQ) documentada pro cron de follow-up
+- **`PROMPT_VERSION`** bumped pra `2026-07-13-cazule-v4-faq-bruna`.
+
+### Handoff pós-pagamento (itens 4, 8)
+- **`src/lib/triagem.ts`** — novo campo `enviarForm: boolean` no `TriagemResult`, no `responseSchema` do Gemini, no `normalize()`, e no `EXTRACTION_GUIDE` (regra: só marca true no turno em que envia o form após o comprovante).
+- **`src/lib/schema.ts`** — `ALTER TABLE ADD COLUMN IF NOT EXISTS pausada BOOLEAN NOT NULL DEFAULT FALSE, pausada_em TIMESTAMPTZ` em `wa_conversations`. Idempotente.
+- **`src/lib/conversation.ts`** — três funções novas:
+  - `pauseConversation(waId)` — marca `pausada=true` e `pausada_em=now()`.
+  - `isPaused(waId)` — retorna se a conversa está pausada.
+  - `computeReply` — agora substitui `{FORM_URL}` no prompt pelo valor de `process.env.FORM_URL` e retorna também `enviarForm`.
+- **Webhook** — antes de responder, checa `isPaused` (IA fica muda mas grava mensagens do paciente). Após responder, se `turno.enviarForm === true`, chama `pauseConversation` + `notifyTeam` (envia resumo pra `NOTIFY_ALERT_NUMBERS`).
+
+### Planilha modelo (itens 2, 5)
+- **NOVO `planilha-horarios-modelo.xlsx`** (na raiz) — 4 abas:
+  - **Instruções**: como preencher + regras da clínica
+  - **Psicólogas**: catálogo (nome, CRP, abordagens, atende individual/casal/infanto)
+  - **Grade Semanal**: matriz psicóloga × dia da semana com janelas de horário
+  - **Agenda**: agendamentos concretos (paciente, data, hora, psicóloga, modalidade, status, valor, pagamento, NF)
+- Bruna preenche esse modelo com os dados reais. Depois, na próxima leva, integramos com Google Drive lendo pela API.
+
+### Env vars novas (item `.env.example` atualizado)
+```
+FORM_URL=                               # Google Forms da Bruna (obrigatório pra o form ir com link)
+NOTIFY_ALERT_NUMBERS=5527981178233,5549999551051  # Bruna, Murilo (E.164 sem "+")
+GEMINI_TRANSCRIBE_MODEL=gemini-2.5-flash-lite      # opcional, mais barato pra áudio
+```
+
+## Armadilhas conhecidas (leia antes de deployar)
+
+### 1. O prompt do WhatsApp pode não vir do código
+`getActivePrompt()` em `src/lib/conversation.ts` retorna primeiro o que estiver salvo em `app_config.system_prompt`. Se a Bruna (ou eu) calibrou algo pela tela `/` antes, é ELE que roda. Trocar o `DEFAULT_PROMPT.ts` não muda nada se o DB tem valor. **Duas opções**:
+- (a) Abrir a tela de calibração `/`, colar o novo prompt manualmente e clicar Salvar.
+- (b) `DELETE FROM app_config WHERE key='system_prompt'` pra ele voltar a usar o `DEFAULT_PROMPT` do código (usar CLI do Railway: `railway connect postgres` → SQL).
+
+### 2. `enviarForm` precisa dos dois lados
+- No **prompt** (`DEFAULT_PROMPT`): diz PRA IA quando marcar true.
+- No **schema Gemini** (`triagem.ts`): declara o campo — sem isso, o Gemini não devolve.
+Se a etapa (1) foi aplicada e ficou só o prompt no DB **sem** falar de `enviarForm`, a IA nunca vai marcar true e o handoff nunca dispara. **Ao atualizar o prompt no DB, mantenha as instruções sobre `enviarForm`.**
+
+### 3. WhatsApp `audio` vs `voice`
+No payload da Meta, mensagem de microfone pode vir como `type: "audio"` com `audio.voice: true`. Meu webhook trata `msg.type === 'audio' || msg.type === 'voice'` — os dois caminhos leem `msg.audio?.id || msg.voice?.id`. Se em produção só vem `audio`, o fallback pega. Se der erro, checar payload real.
+
+### 4. CRLF no repo
+O repo tem line endings CRLF (Windows). Do sandbox Linux do Cowork, o `git status` mostrou TODOS os arquivos como modificados. As mudanças reais estão apenas em:
+```
+src/lib/default-prompt.ts
+src/lib/transcribe.ts         (novo)
+src/lib/whatsapp.ts
+src/lib/conversation.ts
+src/lib/schema.ts
+src/lib/triagem.ts
+src/app/api/whatsapp/webhook/route.ts
+.env.example
+planilha-horarios-modelo.xlsx (novo)
+Documento sem título (8).pdf  (FAQ da Bruna, novo — decidir se commita ou .gitignore)
+CONTEXTO-CAZULE.md            (este arquivo)
+```
+**No commit, `git add` só esses arquivos** — não use `git add -A`.
+
+### 5. Sem `NOTIFY_ALERT_NUMBERS`, o handoff é silencioso
+`notifyTeam` só loga um warning se a env var estiver vazia. Confirmar que está setada no Railway ANTES de considerar o item 8 pronto.
+
+### 6. Sem `FORM_URL`, o link do form fica placeholder
+`computeReply` substitui `{FORM_URL}` pelo valor de `process.env.FORM_URL`. Se não setar, o placeholder vaza literal.
+
+## O que ainda falta (levas seguintes)
+
+- **Proatividade / follow-up** (item 3) — cron job que varre `wa_conversations` com `updated_at` > 24h, `pronto=false`, `pausada=false` e dispara a mensagem de retenção da Bruna. Precisa decidir intervalo, quantas tentativas, e como respeitar a janela de 24h do WhatsApp.
+- **Integração Google Drive** (itens 2, 5) — depois que o Workspace vertechsolucoes.com.br estiver ativo e a planilha compartilhada com `camila@vertechsolucoes.com.br`. Provavelmente uma Service Account + `googleapis` lendo as abas Grade Semanal e Agenda a cada turno relevante.
+- **Criptografia em repouso do campo `lead`** (dados clínicos, LGPD) — mencionado no README, ainda pendente.
+- **Fila durável do webhook** — hoje é `after()` in-process; se crashar entre 200 e o envio, mensagem fica órfã.
+
+## Como validar após deploy
+
+1. Sanity build local: `pnpm build` — 0 erros de tipagem.
+2. Smoke test da triagem: `npx tsx --env-file=.env.local scripts/test-triagem.ts` — pelo menos os cenários existentes continuam passando (curioso, cantada, preço, abordagem, interessada, luto, indeciso).
+3. Testar áudio: mandar um áudio pro número da clínica de um WhatsApp de teste. Deve aparecer resposta em texto natural (a IA "leu" o áudio) — não deve mais aparecer "consigo te ajudar melhor por texto".
+4. Testar fluxo de casal: perguntar "é individual ou casal?" e depois "quanto é pra casal?" — deve responder R$150/R$550/50min.
+5. Testar handoff: fazer o fluxo completo até "vou te enviar o comprovante" e depois mandar um "aqui está o comprovante" (ou uma imagem — vai virar `[image]`). A IA deve responder com a mensagem de confirmação + link do form e, na sequência, você e a Bruna devem receber alerta no WhatsApp. Depois disso, qualquer mensagem do paciente deve ser gravada mas SEM resposta da IA.

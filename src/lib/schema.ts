@@ -29,6 +29,16 @@ export async function initSchema(): Promise<void> {
       );
     `);
 
+    // Colunas de handoff: quando a IA envia o formulário (enviarForm=true),
+    // marcamos pausada=true e o webhook para de responder o paciente até a
+    // equipe assumir. pausada_em fica de trilha pra auditoria/relatório.
+    // ADD COLUMN IF NOT EXISTS é idempotente em bases já existentes.
+    await client.query(`
+      ALTER TABLE wa_conversations
+        ADD COLUMN IF NOT EXISTS pausada     BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS pausada_em  TIMESTAMPTZ;
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS wa_messages (
         id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

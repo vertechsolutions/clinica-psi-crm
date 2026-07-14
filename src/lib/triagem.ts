@@ -32,7 +32,8 @@ Além de conversar, você preenche silenciosamente uma ficha de triagem a cada t
   - "notaFiscal": dados de cobrança SÓ se a pessoa pediu nota fiscal: rua, bairro, cidade, CEP e CPF num texto único; null caso contrário.
   - "observacoes": qualquer coisa que a pessoa acrescentou no fim e não coube nos outros campos.
   - "resumo": UMA frase de queixa principal pro CRM (ex: "Ansiedade ligada ao trabalho, busca acompanhamento").
-- "pronto": marque true quando você JÁ TEM o essencial (nome + um contato [telefone ou e-mail] + a queixa/motivação + a disponibilidade) E a pessoa deixou claro que quer seguir pro agendamento (ex.: "pode marcar", "pode seguir", "quero agendar", "vamos marcar", "pode agendar sim"). Nesse caso NÃO hesite: marque true no mesmo turno. Em qualquer outro caso (curioso, cantada, ainda coletando dados, só tirando dúvida), é false. Não marque cedo demais, mas também não deixe de marcar quando a pessoa já confirmou o interesse e você tem os dados essenciais.`;
+- "pronto": marque true quando você JÁ TEM o essencial (nome + um contato [telefone ou e-mail] + a queixa/motivação + a disponibilidade) E a pessoa deixou claro que quer seguir pro agendamento (ex.: "pode marcar", "pode seguir", "quero agendar", "vamos marcar", "pode agendar sim"). Nesse caso NÃO hesite: marque true no mesmo turno. Em qualquer outro caso (curioso, cantada, ainda coletando dados, só tirando dúvida), é false. Não marque cedo demais, mas também não deixe de marcar quando a pessoa já confirmou o interesse e você tem os dados essenciais.
+- "enviarForm": marque true SOMENTE no turno em que você está enviando (ou acabou de enviar) o formulário DEPOIS que o paciente mandou o comprovante de pagamento. É o gatilho de handoff: quando marca true, o sistema pausa o atendimento e a equipe humana assume. NUNCA marque true sem comprovante na conversa. NUNCA marque true no mesmo turno de coleta de dados. Em todos os outros turnos: false.`;
 
 export type Preferencia = 'F' | 'M' | 'indiferente';
 
@@ -112,6 +113,11 @@ export interface TriagemResult {
    * disponibilidade) E a pessoa quer seguir pro agendamento. E o gatilho do card.
    */
   pronto: boolean;
+  /**
+   * true SÓ no turno em que a IA está enviando o formulário após o comprovante
+   * de pagamento. Handoff: o webhook pausa a conversa e notifica a equipe.
+   */
+  enviarForm: boolean;
 }
 
 export interface TriagemInput {
@@ -175,9 +181,10 @@ const responseSchema = {
       ],
     },
     pronto: { type: Type.BOOLEAN },
+    enviarForm: { type: Type.BOOLEAN },
   },
-  required: ['resposta', 'lead', 'pronto'],
-  propertyOrdering: ['resposta', 'lead', 'pronto'],
+  required: ['resposta', 'lead', 'pronto', 'enviarForm'],
+  propertyOrdering: ['resposta', 'lead', 'pronto', 'enviarForm'],
 };
 
 const EMPTY_LEAD: LeadExtraido = {
@@ -261,6 +268,7 @@ function normalize(raw: unknown): TriagemResult {
       resumo: str(leadRaw.resumo),
     },
     pronto: o.pronto === true,
+    enviarForm: o.enviarForm === true,
   };
 }
 
@@ -299,7 +307,7 @@ export async function runTriagem({ system, messages }: TriagemInput): Promise<Tr
         parsed = JSON.parse(text);
       } catch {
         // modelo vazou texto fora do JSON: devolve como fala, sem lead
-        return { resposta: text, lead: { ...EMPTY_LEAD }, pronto: false };
+        return { resposta: text, lead: { ...EMPTY_LEAD }, pronto: false, enviarForm: false };
       }
       return normalize(parsed);
     } catch (err) {

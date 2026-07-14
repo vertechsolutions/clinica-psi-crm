@@ -81,10 +81,45 @@ export async function upsertConversation(
   );
 }
 
+/** Marca a conversa como pausada (handoff pra equipe humana após envio do form). */
+export async function pauseConversation(waId: string): Promise<void> {
+  await query(
+    `UPDATE wa_conversations
+        SET pausada = TRUE, pausada_em = now(), updated_at = now()
+      WHERE wa_id = $1`,
+    [waId],
+  );
+}
+
+/** true se a IA deve ficar muda pra esse número (form já enviado, equipe assumiu). */
+export async function isPaused(waId: string): Promise<boolean> {
+  try {
+    const { rows } = await query<{ pausada: boolean }>(
+      `SELECT pausada FROM wa_conversations WHERE wa_id = $1`,
+      [waId],
+    );
+    return rows[0]?.pausada === true;
+  } catch (e) {
+    console.error('[conversation] isPaused falhou, assumindo não-pausada', e);
+    return false;
+  }
+}
+
 export interface TurnoResposta {
   resposta: string;
   lead: LeadExtraido;
   pronto: boolean;
+}
+
+/**
+ * Placeholder no prompt/resposta que a IA usa pro link do formulário. Substituído
+ * pelo valor de FORM_URL (env) antes de mandar pro Gemini E depois na saída, pra
+ * garantir que nunca vaza literal pra o paciente.
+ */
+const FORM_URL_PLACEHOLDER = '{FORM_URL}';
+
+function formUrl(): string {
+  return process.env.FORM_URL || FORM_URL_PLACEHOLDER;
 }
 
 /**
@@ -93,12 +128,20 @@ export interface TurnoResposta {
  * WhatsApp dar certo (via persistReply), pra o histórico nunca ter uma resposta
  * que o paciente não recebeu.
  */
-export async function computeReply(waId: string): Promise<TurnoResposta> {
+export async function computeReply(waId: string): Promise<TurnoResposta & { enviarForm: boolean }> {
   const history = await loadHistory(waId);
-  const system = await getActivePrompt();
+  // Substitui {FORM_URL} no system prompt pelo valor real (ou mantém placeholder
+  // se não estiver configurado — nesse caso a IA acaba pedindo pra equipe).
+  const system = (await getActivePrompt()).replaceAll(FORM_URL_PLACEHOLDER, formUrl());
   const result = await runTriagem({ system, messages: history });
-  const resposta = result.resposta?.trim() || 'Desculpa, pode repetir? Não consegui entender.';
-  return { resposta, lead: result.lead, pronto: result.pronto };
+  let resposta = result.resposta?.trim() || 'Desculpa, pode repetir? Não consegui entender.';
+  // Cinto e suspensórios: se a IA marcou enviarForm e o link não veio, adiciona.
+  if (result.enviarForm && !resposta.includes(formUrl()) && process.env.FORM_URL) {
+    resposta = `${resposta}\n\n${formUrl()}`;
+  }
+  // Nunca deixa o placeholder cru vazar
+  resposta = resposta.replaceAll(FORM_URL_PLACEHOLDER, formUrl());
+  return { resposta, lead: result.lead, pronto: result.pronto, enviarForm: result.enviarForm };
 }
 
 /** Persiste a resposta do assistente + a ficha (chamar só após enviar ao WhatsApp). */

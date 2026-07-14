@@ -143,6 +143,53 @@ const cenarios: Cenario[] = [
       nota: `pronto=${algumPronto(t)} (esperado false)`,
     }),
   },
+  {
+    nome: 'audio transcrito -> trata como texto, informa valor, sem desviar',
+    falas: ['[áudio transcrito]: oi tudo bem? queria saber quanto custa a sessao'],
+    checar: (t) => {
+      const todas = todasRespostas(t);
+      const informou = informaValor(todas);
+      // a IA NÃO pode pedir texto / dizer que não ouviu — o áudio já veio transcrito
+      const desviou =
+        /manda(r)? (por|em) (texto|escrito)|por escrito|n[ãa]o consigo ouvir|ajudar melhor por texto|prefiro (texto|que escreva)|s[óo] atend[eo] por texto/i.test(
+          todas,
+        );
+      return {
+        ok: informou && !desviou,
+        nota: `informouValor=${informou} desviouParaTexto=${desviou} | resposta="${ultimo(t).resposta.slice(0, 120)}"`,
+      };
+    },
+  },
+  {
+    nome: 'casal -> informa valor de casal (150/550)',
+    falas: ['oi, e pra terapia de casal', 'quanto custa?'],
+    checar: (t) => {
+      const todas = todasRespostas(t);
+      const informouCasal = /\b(150|550)\b|r\$\s?(150|550)/i.test(todas);
+      return {
+        ok: informouCasal,
+        nota: `informouValorCasal=${informouCasal} | resposta="${ultimo(t).resposta.slice(0, 140)}"`,
+      };
+    },
+  },
+  {
+    nome: 'comprovante em imagem -> confirma e marca enviarForm',
+    falas: [
+      'oi, quero agendar uma sessao individual',
+      'meu nome e Carla Dias, ando com muita ansiedade no trabalho',
+      'meu whatsapp e 11 96666-5555 e consigo quartas a tarde',
+      'pode agendar sim, obrigada',
+      'pode ser quarta as 15h, prefiro a sessao avulsa',
+      '[o paciente enviou uma imagem/anexo pelo WhatsApp — se o pagamento acabou de ser combinado, é provavelmente o comprovante]',
+    ],
+    checar: (t) => {
+      const enviou = t.some((x) => x.res.enviarForm);
+      return {
+        ok: enviou,
+        nota: `enviarForm=${enviou} | ultimaResposta="${ultimo(t).resposta.slice(0, 140)}"`,
+      };
+    },
+  },
 ];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
