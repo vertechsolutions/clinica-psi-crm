@@ -23,6 +23,9 @@ import { runTriagem } from '../src/lib/triagem';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { splitReply } from '../src/lib/split-message';
 
+/** Espelha o computeReply: substitui {FORM_URL} pelo valor real quando setado. */
+const SYSTEM = DEFAULT_PROMPT.replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}');
+
 interface Turno {
   paciente: string;
   camila: string;
@@ -59,6 +62,18 @@ mensagem por vez. Responda SOMENTE com a próxima fala, sem aspas.`,
   encerra: () => false,
 };
 
+const PACIENTE_CASAL: Persona = {
+  nome: 'paciente-casal-etapas-valores',
+  system: `Você simula uma PACIENTE no WhatsApp de uma clínica de psicologia buscando TERAPIA DE CASAL.
+Persona: Renata, 34 anos, casada, quer entender como funciona a terapia de casal antes de decidir.
+Fluxo: cumprimente dizendo que é pra casal, pergunte quanto custa, depois pergunte como funcionam
+as sessões (etapas), pergunte se pode um horário à noite, e encerre dizendo que vai conversar com o
+marido e volta depois. Escreva curto, como no WhatsApp, PT-BR, uma mensagem por vez.
+Responda SOMENTE com a próxima fala da paciente, sem aspas, sem narração.`,
+  maxTurnos: 6,
+  encerra: () => false,
+};
+
 async function proximaFalaPaciente(
   ai: GoogleGenAI,
   persona: Persona,
@@ -87,7 +102,7 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
     const fala = await proximaFalaPaciente(ai, persona, transcript);
     if (!fala) break;
     history.push({ role: 'user', content: fala });
-    const res = await runTriagem({ system: DEFAULT_PROMPT, messages: history });
+    const res = await runTriagem({ system: SYSTEM, messages: history });
     history.push({ role: 'assistant', content: res.resposta });
     const bolhas = splitReply(res.resposta);
     transcript.push({ paciente: fala, camila: res.resposta, enviarForm: res.enviarForm });
@@ -111,6 +126,7 @@ async function main() {
   }
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   await rodarPersona(ai, PACIENTE_INDIVIDUAL);
+  await rodarPersona(ai, PACIENTE_CASAL);
   await rodarPersona(ai, LEAD_FRIO);
   console.log('\n\x1b[1mSimulação concluída. Revise as transcrições acima.\x1b[0m');
 }

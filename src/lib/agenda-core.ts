@@ -6,7 +6,6 @@
  */
 export const DIAS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'] as const;
 export type Dia = (typeof DIAS)[number];
-export type Modalidade = 'Individual' | 'Casal' | 'Infanto-juvenil';
 
 export interface Psicologa {
   nome: string;
@@ -97,45 +96,62 @@ export function parseAgenda(rows: string[][]): AgendaRow[] {
     }));
 }
 
-function capaz(p: Psicologa, mod?: Modalidade): boolean {
-  if (mod === 'Casal') return p.casal;
-  if (mod === 'Infanto-juvenil') return p.infanto;
-  return p.individual; // default: individual
+/** Converte "dd/mm/yyyy" em Date (meia-noite local); null se não parsear. */
+function parseDataBR(s: string): Date | null {
+  const m = s.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export interface ResumoOpts {
+  /** data de referência pra descartar reservas passadas (default: agora). Injetável nos testes. */
+  hoje?: Date;
 }
 
 /**
- * Resumo compacto (bounded) da agenda pra injetar no system prompt. Lista as
- * psicólogas elegíveis à modalidade com suas janelas fixas, e os horários já
- * reservados (sem vazar nome do paciente — só data/hora/psicóloga/modalidade).
- * Cancelados são ignorados.
+ * Resumo compacto (bounded) da agenda pra injetar no system prompt. Lista TODAS
+ * as psicólogas com janelas, marcando o que cada uma atende (individual/casal/
+ * infanto) — a conversa pode ser de qualquer modalidade e o modelo escolhe pela
+ * tag. Reservas: sem nome de paciente (só data/hora/psicóloga/modalidade),
+ * canceladas ignoradas, datas passadas descartadas.
  */
-export function resumoDisponibilidade(
-  data: AgendaData,
-  opts: { modalidade?: Modalidade } = {},
-): string {
+export function resumoDisponibilidade(data: AgendaData, opts: ResumoOpts = {}): string {
   const { psicologas, grade, agenda } = data;
-  const mod = opts.modalidade;
+  const hoje = opts.hoje ?? new Date();
+  const hojeZero = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
   const gradeByNome = new Map(grade.map((g) => [g.nome, g.janelas]));
 
   const linhas = psicologas
-    .filter((p) => capaz(p, mod))
     .map((p) => {
       const jan = gradeByNome.get(p.nome) ?? {};
       const dias = DIAS.filter((d) => jan[d]).map((d) => `${d.slice(0, 3).toLowerCase()} ${limpa(jan[d] as string)}`);
       if (!dias.length) return null;
-      return `- ${limpa(p.nome)} (${limpa(p.abordagens)}): ${dias.join(', ')}`;
+      const tags = [
+        p.individual ? 'individual' : null,
+        p.casal ? 'casal' : null,
+        p.infanto ? 'infanto 13+' : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      return `- ${limpa(p.nome)} (${limpa(p.abordagens)}; atende: ${tags || 'a confirmar'}): ${dias.join(', ')}`;
     })
     .filter((x): x is string => Boolean(x));
 
   const ocupados = agenda
-    .filter((a) => !a.status.toLowerCase().startsWith('cancela') && a.data && a.hora)
+    .filter((a) => {
+      if (!a.data || !a.hora) return false;
+      if (a.status.toLowerCase().startsWith('cancela')) return false;
+      const d = parseDataBR(a.data);
+      // sem parse: mantém (conservador — melhor bloquear de mais que oferecer slot ocupado)
+      return d === null || d >= hojeZero;
+    })
     .slice(0, 12)
     .map((a) => `${limpa(a.data)} ${limpa(a.hora)} ${limpa(a.psicologa)}${a.modalidade ? ` (${limpa(a.modalidade)})` : ''}`);
 
-  const titulo = mod ? mod.toLowerCase() : 'individual';
   return [
-    '[AGENDA DA CLÍNICA — fonte: planilha. Use para SUGERIR um horário concreto e depois confirmar. NUNCA invente horário fora desta lista nem prometa sem confirmar.]',
-    `Psicólogas que atendem ${titulo} e suas janelas fixas:`,
+    '[AGENDA DA CLÍNICA — fonte: planilha. Use para SUGERIR um horário concreto com uma psicóloga cuja tag bate com a modalidade do paciente (individual/casal/infanto) e depois confirme. NUNCA invente horário fora desta lista nem prometa sem confirmar.]',
+    'Psicólogas, o que cada uma atende e janelas fixas:',
     ...(linhas.length ? linhas : ['- (nenhuma janela cadastrada — deixe a equipe confirmar)']),
     ocupados.length ? `Já reservado (não ofereça esses): ${ocupados.join('; ')}` : '',
   ]

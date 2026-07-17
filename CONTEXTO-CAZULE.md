@@ -87,6 +87,42 @@ NOTIFY_ALERT_NUMBERS=5527981178233,5549999551051  # Bruna, Murilo (E.164 sem "+"
 GEMINI_TRANSCRIBE_MODEL=gemini-2.5-flash-lite      # opcional, mais barato pra áudio
 ```
 
+## Leva 2 — implementada em 17/07/2026 (branch `feat/camila-melhorias`)
+
+Plano completo em `docs/superpowers/plans/2026-07-17-camila-ia-melhorias.md`. Testada com
+simulação Gemini (paciente individual, casal e lead frio) + revisão Fable + 2 revisões
+independentes (código e segurança/LGPD). Principais entregas:
+
+- **Bolhas (item 7)** — `src/lib/split-message.ts` (`splitReply`) + `sendTextSequence` no
+  cliente WhatsApp: resposta com parágrafos/longa vira 2–3 mensagens com respiro de ~900ms.
+- **Agenda no Sheets (itens 2/5)** — `src/lib/agenda-core.ts` (parsers puros + resumo com
+  tags individual/casal/infanto e filtro de reservas passadas) + `src/lib/sheets.ts`
+  (Service Account JWT + cache 60s + fallback gracioso). O bloco é APPENDADO ao prompt em
+  `computeReply` (vale mesmo com prompt vindo do `app_config`). Diagnóstico:
+  `npx tsx --env-file=.env.local scripts/test-sheets-live.ts`.
+- **Follow-up (item 3) — código pronto, ADIADO por decisão de 17/07** — `src/lib/followup.ts`
+  (msg 7 dentro de 24h, template Meta fora; teto 2x por lead; telefone mascarado nos logs).
+  OPT-IN: só liga com `FOLLOWUP_ENABLED=true`. Falta: template `retomada_atendimento`
+  aprovado na Meta + opt-out explícito antes de ligar.
+- **Prompt v7** (`2026-07-17-cazule-v7-agenda-antialucinacao`) — REGRA DURA DE AGENDA (sem
+  bloco [AGENDA DA CLÍNICA], nunca inventar psicóloga/horário nem avançar a pagamento — a
+  v6 fechava venda sobre slot inexistente quando cobrada num follow-up), nunca repetir
+  mensagem, uma pergunta por vez, pagamento sem fricção, valores em 2 bolhas.
+- **FORM_URL resolvido** — o form real da clínica ("Formulário Clínica Cazule", bate 1:1 com
+  a ficha de 18 campos) é público e validado sem login:
+  `https://docs.google.com/forms/d/1A1DWxfinQWBU1oulWQRP7zsmKW6DHL6jjRXzzzX5bhg/viewform`
+
+### Credenciais Google (status 17/07, em andamento com o Murilo)
+- Workspace `vertechsolucoes.com.br` ativo; mailbox `camilaia@` criado.
+- Org policy `iam.disableServiceAccountKeyCreation` BLOQUEIA criação de chave de service
+  account em projetos da organização (aconteceu 2x: projetos `cazule-camila` e
+  `camila-ia-do-murilo`, ambos caíram dentro da org). Saídas: (A2) criar projeto na conta
+  pessoal com "Sem organização" no campo Local, ou (B) dar-se o papel "Administrador de
+  políticas da organização" e sobrescrever a política no projeto.
+- Depois: planilha `Cazule — Agenda` (upload do `planilha-horarios-modelo.xlsx` → Salvar
+  como Planilhas Google no Drive do `camilaia@`) compartilhada com o e-mail da service
+  account (Leitor) → `GOOGLE_SERVICE_ACCOUNT_JSON` + `AGENDA_SHEET_ID` no Railway.
+
 ## Armadilhas conhecidas (leia antes de deployar)
 
 ### 1. O prompt do WhatsApp pode não vir do código
@@ -127,10 +163,16 @@ CONTEXTO-CAZULE.md            (este arquivo)
 
 ## O que ainda falta (levas seguintes)
 
-- **Proatividade / follow-up** (item 3) — cron job que varre `wa_conversations` com `updated_at` > 24h, `pronto=false`, `pausada=false` e dispara a mensagem de retenção da Bruna. Precisa decidir intervalo, quantas tentativas, e como respeitar a janela de 24h do WhatsApp.
-- **Integração Google Drive** (itens 2, 5) — depois que o Workspace vertechsolucoes.com.br estiver ativo e a planilha compartilhada com `camila@vertechsolucoes.com.br`. Provavelmente uma Service Account + `googleapis` lendo as abas Grade Semanal e Agenda a cada turno relevante.
+- **Ligar o follow-up** (item 3 — código pronto na Leva 2): aprovar template
+  `retomada_atendimento` na Meta, implementar opt-out explícito ("não quero mais contato"
+  → pausa), validar cadência com a Bruna, e só então `FOLLOWUP_ENABLED=true`.
+- **Credenciais Google em produção** (itens 2, 5): concluir a chave da service account
+  (bloqueio de org policy — ver Leva 2) e setar `GOOGLE_SERVICE_ACCOUNT_JSON` +
+  `AGENDA_SHEET_ID` no Railway.
 - **Criptografia em repouso do campo `lead`** (dados clínicos, LGPD) — mencionado no README, ainda pendente.
 - **Fila durável do webhook** — hoje é `after()` in-process; se crashar entre 200 e o envio, mensagem fica órfã.
+- **PsicoManeja** (agenda/prontuário) e confirmação de pagamento via API bancária
+  (comprovantes falsos são dor real) — backlog do piloto.
 
 ## Como validar após deploy
 

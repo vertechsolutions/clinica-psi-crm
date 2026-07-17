@@ -91,12 +91,14 @@ export async function runFollowup(now = new Date()): Promise<number> {
 }
 
 /**
- * Agenda o follow-up a cada 1h (como o cleanup). Gate: FOLLOWUP_ENABLED !== 'false'.
+ * Agenda o follow-up a cada 1h (como o cleanup). OPT-IN: só liga com
+ * FOLLOWUP_ENABLED=true explícito — decisão do piloto (17/07): reengajamento
+ * proativo fica desligado até a Bruna aprovar cadência + template Meta.
  * .unref() pra não segurar o processo. Roda no container persistente do Railway.
  */
 export function scheduleFollowup(): void {
-  if (process.env.FOLLOWUP_ENABLED === 'false') {
-    console.log('[followup] desativado (FOLLOWUP_ENABLED=false).');
+  if (process.env.FOLLOWUP_ENABLED !== 'true') {
+    console.log('[followup] desativado — ligue com FOLLOWUP_ENABLED=true quando o template Meta estiver aprovado.');
     return;
   }
   const run = () => runFollowup().catch((e) => console.error('[followup] ciclo falhou', e));

@@ -19,8 +19,9 @@ const gradeRows = [
 ];
 const agendaRows = [
   ['Data', 'Hora', 'Paciente', 'WhatsApp', 'Psicóloga', 'Modalidade', 'Tipo', 'Status', 'Valor (R$)', 'Pagamento', 'Nota Fiscal?', 'Observações'],
-  ['15/07/2026', '18:00', 'Mariana Silva', '5527999998888', 'Bruna Ferreira', 'Individual', 'Avulsa', 'Confirmada', '75', 'Pix', 'Não', '1ª sessão'],
-  ['16/07/2026', '20:00', 'Ana e Rodrigo', '5527999996666', 'Bruna Ferreira', 'Casal', 'Avulsa', 'Cancelado', '150', 'Pix', 'Não', ''],
+  ['10/07/2026', '09:00', 'Antiga Paciente', '5527999997777', 'Amanda Souza', 'Individual', 'Avulsa', 'Realizada', '75', 'Pix', 'Não', 'passada'],
+  ['18/07/2026', '18:00', 'Mariana Silva', '5527999998888', 'Bruna Ferreira', 'Individual', 'Avulsa', 'Confirmada', '75', 'Pix', 'Não', '1ª sessão'],
+  ['20/07/2026', '20:00', 'Ana e Rodrigo', '5527999996666', 'Bruna Ferreira', 'Casal', 'Avulsa', 'Cancelado', '150', 'Pix', 'Não', ''],
 ];
 
 const psic = parsePsicologas(psicRows);
@@ -34,20 +35,26 @@ assert.strictEqual(grade[0].janelas['Segunda'], '14:00-19:00');
 assert.strictEqual(grade[0].janelas['Quarta'], undefined); // '-' vira ausência
 
 const agenda = parseAgenda(agendaRows);
-assert.strictEqual(agenda.length, 2);
-assert.strictEqual(agenda[0].paciente, 'Mariana Silva');
+assert.strictEqual(agenda.length, 3);
+assert.strictEqual(agenda[1].paciente, 'Mariana Silva');
 
 const data: AgendaData = { psicologas: psic, grade, agenda };
 
-const indiv = resumoDisponibilidade(data, { modalidade: 'Individual' });
-assert.ok(indiv.includes('Bruna Ferreira'), 'individual: lista Bruna');
-assert.ok(indiv.includes('Amanda Souza'), 'individual: lista Amanda');
-assert.ok(indiv.includes('15/07/2026 18:00'), 'mostra ocupado confirmado');
-assert.ok(!indiv.includes('Ana e Rodrigo'), 'não vaza nome de paciente ocupado');
-assert.ok(!indiv.includes('20:00 Bruna'), 'agendamento CANCELADO não conta como ocupado');
+// hoje fixo (16/07): 10/07 é passada, 18/07 é futura, 20/07 é cancelada
+const resumo = resumoDisponibilidade(data, { hoje: new Date(2026, 6, 16) });
 
-const casal = resumoDisponibilidade(data, { modalidade: 'Casal' });
-assert.ok(casal.includes('Bruna Ferreira'), 'casal: Bruna atende');
-assert.ok(!casal.includes('Amanda Souza'), 'casal: Amanda NÃO atende casal');
+// todas as psicólogas com janela aparecem, com as tags do que atendem
+assert.ok(resumo.includes('Bruna Ferreira'), 'lista Bruna');
+assert.ok(resumo.includes('Amanda Souza'), 'lista Amanda');
+assert.ok(/Bruna Ferreira \(.*atende: individual, casal, infanto 13\+\)/.test(resumo), 'tags da Bruna (ind+casal+infanto)');
+assert.ok(/Amanda Souza \(.*atende: individual\)/.test(resumo), 'tags da Amanda (só individual)');
 
-console.log('OK test-agenda — parsers + resumo');
+// reservas: futura aparece; passada e cancelada não; nome de paciente nunca vaza
+assert.ok(resumo.includes('18/07/2026 18:00'), 'mostra reserva futura confirmada');
+assert.ok(!resumo.includes('10/07/2026'), 'reserva PASSADA não aparece');
+assert.ok(!resumo.includes('20/07/2026'), 'reserva CANCELADA não aparece');
+assert.ok(!resumo.includes('Mariana Silva'), 'não vaza nome de paciente');
+assert.ok(!resumo.includes('Ana e Rodrigo'), 'não vaza nome de paciente cancelado');
+assert.ok(!resumo.includes('5527999998888'), 'não vaza telefone de paciente');
+
+console.log('OK test-agenda — parsers + resumo v2 (tags + filtro de datas)');
