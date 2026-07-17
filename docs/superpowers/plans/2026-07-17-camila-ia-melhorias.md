@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **NOTA DE ATUALIZAÇÃO (17/07, pós-execução):** a agenda evoluiu pra v2 depois deste plano —
+> `resumoDisponibilidade(data, {hoje})` lista TODAS as psicólogas com tags
+> individual/casal/13+ e filtra reservas passadas (o parâmetro `{modalidade}` descrito nas
+> seções abaixo foi substituído). O follow-up virou OPT-IN (`FOLLOWUP_ENABLED=true`
+> explícito) e o canal dominante é o template Meta. Fonte da verdade: `src/lib/agenda-core.ts`
+> e `src/lib/followup.ts`.
+
 **Goal:** Completar e ampliar a assistente Camila (WhatsApp da Clínica Cazule) cobrindo as 8 demandas da Bruna: áudio, agenda via Google Sheets, proatividade/follow-up, form pós-pagamento, planilha-banco, FAQ, respostas curtas em múltiplas mensagens, e desligar a IA no handoff — com uma rodada de testes dirigida por Gemini (paciente/lead simulados), revisão por modelo Fable e correções executadas em Opus/ultracode.
 
 **Architecture:** Next.js 16 (App Router, `--webpack`) rodando no Railway; webhook do WhatsApp Cloud API processa mensagens em `after()`, chama `computeReply()` → `runTriagem()` (Gemini 2.5 Flash, saída JSON estruturada) e persiste no Postgres (`pg`). As melhorias entram como **módulos pequenos e focados**: entrega em múltiplas bolhas (`split-message`), leitura da agenda por Service Account (`sheets` + `agenda-core` puro), follow-up proativo por cron in-process (`followup`), tudo com *fallback gracioso* quando a env var correspondente não está configurada (o app nunca quebra por falta de credencial).

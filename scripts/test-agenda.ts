@@ -43,6 +43,9 @@ const data: AgendaData = { psicologas: psic, grade, agenda };
 // hoje fixo (16/07): 10/07 é passada, 18/07 é futura, 20/07 é cancelada
 const resumo = resumoDisponibilidade(data, { hoje: new Date(2026, 6, 16) });
 
+// informa a data de referência pro modelo (16/07/2026 é quinta-feira)
+assert.ok(resumo.includes('Hoje é quinta-feira, 16/07/2026.'), 'linha de data de hoje');
+
 // todas as psicólogas com janela aparecem, com as tags do que atendem
 assert.ok(resumo.includes('Bruna Ferreira'), 'lista Bruna');
 assert.ok(resumo.includes('Amanda Souza'), 'lista Amanda');

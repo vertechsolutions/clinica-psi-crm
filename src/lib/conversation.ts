@@ -144,6 +144,9 @@ export async function computeReply(waId: string): Promise<TurnoResposta & { envi
   if (result.enviarForm && !resposta.includes(formUrl()) && process.env.FORM_URL) {
     resposta = `${resposta}\n\n${formUrl()}`;
   }
+  if (result.enviarForm && !process.env.FORM_URL) {
+    console.warn('[conversation] enviarForm=true mas FORM_URL não está setada — o paciente vai receber o placeholder.');
+  }
   // Nunca deixa o placeholder cru vazar
   resposta = resposta.replaceAll(FORM_URL_PLACEHOLDER, formUrl());
   return { resposta, lead: result.lead, pronto: result.pronto, enviarForm: result.enviarForm };

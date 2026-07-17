@@ -35,4 +35,15 @@ assert.ok(semPonto.every((p) => p.length <= 100), 'hard-split respeita maxLen qu
 const capado = splitReply('palavra '.repeat(50), { maxLen: 100, maxParts: 3 });
 assert.strictEqual(capado.length, 3, 'nunca mais que maxParts bolhas');
 
-console.log(`OK test-split — 7 asserts`);
+// 8) normaliza texto colado após pontuação ("atender.As" → "atender. As"),
+//    sem quebrar URLs (ponto seguido de minúscula fica intacto)
+assert.deepStrictEqual(
+  splitReply('Estou aqui para te atender.As sessões custam R$ 75,00.'),
+  ['Estou aqui para te atender. As sessões custam R$ 75,00.'],
+);
+assert.deepStrictEqual(
+  splitReply('O formulário: https://docs.google.com/forms/d/abc/viewform'),
+  ['O formulário: https://docs.google.com/forms/d/abc/viewform'],
+);
+
+console.log(`OK test-split — 9 asserts`);

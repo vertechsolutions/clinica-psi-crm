@@ -22,9 +22,33 @@ import { GoogleGenAI } from '@google/genai';
 import { runTriagem } from '../src/lib/triagem';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { splitReply } from '../src/lib/split-message';
+import { resumoDisponibilidade } from '../src/lib/agenda-core';
 
 /** Espelha o computeReply: substitui {FORM_URL} pelo valor real quando setado. */
 const SYSTEM = DEFAULT_PROMPT.replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}');
+
+/**
+ * Agenda fictícia gerada pela MESMA função do runtime (fidelidade máxima ao bloco
+ * que a Camila vê em produção). Usada na persona individual pra exercitar o fluxo
+ * completo: proposta de horário real → pagamento → comprovante → form.
+ */
+const AGENDA_FAKE = resumoDisponibilidade(
+  {
+    psicologas: [
+      { nome: 'Bruna Ferreira', crp: 'CRP 16/1', abordagens: 'TCC, Humanista', individual: true, casal: true, infanto: true, prefGenero: 'F', obs: '' },
+      { nome: 'Camila Rocha', crp: 'CRP 16/2', abordagens: 'TCC', individual: true, casal: true, infanto: false, prefGenero: 'F', obs: '' },
+    ],
+    grade: [
+      { nome: 'Bruna Ferreira', janelas: { Segunda: '14:00-19:00', 'Terça': '14:00-19:00', Quinta: '14:00-19:00' } },
+      { nome: 'Camila Rocha', janelas: { Segunda: '18:00-21:00', Quarta: '18:00-21:00', Sexta: '18:00-21:00' } },
+    ],
+    agenda: [
+      { data: '20/07/2026', hora: '18:00', paciente: 'X', whatsapp: '', psicologa: 'Camila Rocha', modalidade: 'Individual', tipo: 'Avulsa', status: 'Confirmada', valor: '75', pagamento: 'Pix', nf: 'Não', obs: '' },
+    ],
+  },
+  { hoje: new Date(2026, 6, 17) },
+);
+const SYSTEM_COM_AGENDA = `${SYSTEM}\n\n${AGENDA_FAKE}`;
 
 interface Turno {
   paciente: string;
@@ -37,10 +61,12 @@ interface Persona {
   system: string;
   maxTurnos: number;
   encerra: (t: Turno[]) => boolean;
+  /** true = a Camila enxerga o bloco [AGENDA DA CLÍNICA] (fake) neste cenário. */
+  comAgenda?: boolean;
 }
 
 const PACIENTE_INDIVIDUAL: Persona = {
-  nome: 'paciente-individual-ansiedade',
+  nome: 'paciente-individual-ansiedade (com agenda)',
   system: `Você está simulando uma PACIENTE real no WhatsApp de uma clínica de psicologia.
 Persona: Mariana, 29 anos, ansiosa por causa do trabalho, quer começar terapia INDIVIDUAL.
 Regras: escreva como no WhatsApp, curto, uma mensagem por vez, em PT-BR. NÃO seja robótica.
@@ -50,6 +76,18 @@ responda "[o paciente enviou uma imagem/anexo pelo WhatsApp — se o pagamento a
 Responda SOMENTE com a próxima fala da paciente, sem aspas, sem narração.`,
   maxTurnos: 12,
   encerra: (t) => t.some((x) => x.enviarForm),
+  comAgenda: true,
+};
+
+const INSISTENTE_SEM_AGENDA: Persona = {
+  nome: 'insistente-sem-agenda (anti-alucinação)',
+  system: `Você simula um PACIENTE no WhatsApp de uma clínica de psicologia.
+Persona: Diego, ansioso pra marcar logo. Diga que quer agendar terapia individual à noite,
+e nos turnos seguintes COBRE resposta com variações de "e aí, conseguiu o horário?",
+"alguma novidade?", "consegue me confirmar hoje?". Escreva curto, PT-BR, uma mensagem por vez.
+Responda SOMENTE com a próxima fala, sem aspas.`,
+  maxTurnos: 5,
+  encerra: () => false,
 };
 
 const LEAD_FRIO: Persona = {
@@ -98,11 +136,14 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
   const history: { role: 'user' | 'assistant'; content: string }[] = [];
   const transcript: Turno[] = [];
 
+  const system = persona.comAgenda ? SYSTEM_COM_AGENDA : SYSTEM;
+  let ultimo: Awaited<ReturnType<typeof runTriagem>> | null = null;
   for (let i = 0; i < persona.maxTurnos; i++) {
     const fala = await proximaFalaPaciente(ai, persona, transcript);
     if (!fala) break;
     history.push({ role: 'user', content: fala });
-    const res = await runTriagem({ system: SYSTEM, messages: history });
+    const res = await runTriagem({ system, messages: history });
+    ultimo = res;
     history.push({ role: 'assistant', content: res.resposta });
     const bolhas = splitReply(res.resposta);
     transcript.push({ paciente: fala, camila: res.resposta, enviarForm: res.enviarForm });
@@ -115,7 +156,8 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
   }
 
   const respostasAssist = history.filter((h) => h.role === 'assistant').length;
-  console.log(`\x1b[1mResumo ${persona.nome}: ${transcript.length} turnos, respostas do assistente=${respostasAssist}\x1b[0m`);
+  console.log(`\x1b[1mResumo ${persona.nome}: ${transcript.length} turnos, respostas do assistente=${respostasAssist}, pronto=${ultimo?.pronto ?? false}\x1b[0m`);
+  if (ultimo) console.log(`ficha final: ${JSON.stringify(ultimo.lead)}`);
   return transcript;
 }
 
@@ -126,6 +168,7 @@ async function main() {
   }
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   await rodarPersona(ai, PACIENTE_INDIVIDUAL);
+  await rodarPersona(ai, INSISTENTE_SEM_AGENDA);
   await rodarPersona(ai, PACIENTE_CASAL);
   await rodarPersona(ai, LEAD_FRIO);
   console.log('\n\x1b[1mSimulação concluída. Revise as transcrições acima.\x1b[0m');

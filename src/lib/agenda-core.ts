@@ -116,11 +116,17 @@ export interface ResumoOpts {
  * tag. Reservas: sem nome de paciente (só data/hora/psicóloga/modalidade),
  * canceladas ignoradas, datas passadas descartadas.
  */
+const DIAS_SEMANA = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
 export function resumoDisponibilidade(data: AgendaData, opts: ResumoOpts = {}): string {
   const { psicologas, grade, agenda } = data;
   const hoje = opts.hoje ?? new Date();
   const hojeZero = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
   const gradeByNome = new Map(grade.map((g) => [g.nome, g.janelas]));
+  const dd = String(hojeZero.getDate()).padStart(2, '0');
+  const mm = String(hojeZero.getMonth() + 1).padStart(2, '0');
+  // O modelo precisa da data de referência pra relacionar dd/mm com dia da semana.
+  const linhaHoje = `Hoje é ${DIAS_SEMANA[hojeZero.getDay()]}, ${dd}/${mm}/${hojeZero.getFullYear()}.`;
 
   const linhas = psicologas
     .map((p) => {
@@ -151,6 +157,7 @@ export function resumoDisponibilidade(data: AgendaData, opts: ResumoOpts = {}): 
 
   return [
     '[AGENDA DA CLÍNICA — fonte: planilha. Use para SUGERIR um horário concreto com uma psicóloga cuja tag bate com a modalidade do paciente (individual/casal/infanto) e depois confirme. NUNCA invente horário fora desta lista nem prometa sem confirmar.]',
+    linhaHoje,
     'Psicólogas, o que cada uma atende e janelas fixas:',
     ...(linhas.length ? linhas : ['- (nenhuma janela cadastrada — deixe a equipe confirmar)']),
     ocupados.length ? `Já reservado (não ofereça esses): ${ocupados.join('; ')}` : '',

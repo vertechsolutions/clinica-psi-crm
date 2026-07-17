@@ -101,7 +101,9 @@ independentes (código e segurança/LGPD). Principais entregas:
   `computeReply` (vale mesmo com prompt vindo do `app_config`). Diagnóstico:
   `npx tsx --env-file=.env.local scripts/test-sheets-live.ts`.
 - **Follow-up (item 3) — código pronto, ADIADO por decisão de 17/07** — `src/lib/followup.ts`
-  (msg 7 dentro de 24h, template Meta fora; teto 2x por lead; telefone mascarado nos logs).
+  (canal dominante: TEMPLATE Meta, pois o lead frio por definição passa da janela de 24h;
+  o texto livre da msg 7 é fallback de exceção; teto 2x por lead; telefone mascarado nos
+  logs; a mensagem enviada é persistida no histórico pro modelo ter contexto na resposta).
   OPT-IN: só liga com `FOLLOWUP_ENABLED=true`. Falta: template `retomada_atendimento`
   aprovado na Meta + opt-out explícito antes de ligar.
 - **Prompt v7** (`2026-07-17-cazule-v7-agenda-antialucinacao`) — REGRA DURA DE AGENDA (sem

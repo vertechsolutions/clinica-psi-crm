@@ -53,7 +53,10 @@ function splitBySentence(paragraph: string, maxLen: number): string[] {
 export function splitReply(text: string, opts: SplitOpts = {}): string[] {
   const maxLen = opts.maxLen ?? DEFAULT_MAX_LEN;
   const maxParts = opts.maxParts ?? DEFAULT_MAX_PARTS;
-  const clean = (text ?? '').trim();
+  // Normalização defensiva: o modelo às vezes cola frases ("atender.As sessões").
+  // Insere espaço após pontuação seguida de maiúscula. Restrito a maiúsculas pra
+  // não quebrar URLs (docs.google.com) nem decimais.
+  const clean = (text ?? '').replace(/([.!?…])(?=[A-ZÀ-ÖØ-Þ])/g, '$1 ').trim();
   if (!clean) return [];
 
   const paras = clean

@@ -1,10 +1,17 @@
 /**
  * Proatividade (goal 3): reengaja leads que demonstraram interesse mas sumiram.
- * Cron in-process (como o cleanup LGPD). Dentro da janela de 24h do WhatsApp
- * manda a mensagem 7 do FAQ (texto livre); fora da janela usa um template
- * aprovado. Gate por env: FOLLOWUP_ENABLED e FOLLOWUP_TEMPLATE_NAME.
+ * Cron in-process (como o cleanup LGPD). Gate por env: FOLLOWUP_ENABLED (opt-in)
+ * e FOLLOWUP_TEMPLATE_NAME.
+ *
+ * Canal: na prática o caminho dominante é o TEMPLATE aprovado da Meta — o filtro
+ * de leads frios exige updated_at > 24h, e como updated_at é bumpado a cada turno,
+ * o último inbound quase sempre também passa de 24h. O caminho 'freeform'
+ * (mensagem 7 em texto livre) fica como fallback de exceção (ex.: turno em que a
+ * resposta falhou e não foi persistida). Sem template configurado, leads fora da
+ * janela são pulados com aviso no log.
  */
 import { query } from './db';
+import { recordAssistantMessage } from './conversation';
 import { sendText, sendTemplate } from './whatsapp';
 
 /** Mensagem 7 do FAQ da Bruna — reengajamento dentro da janela de 24h. */
@@ -79,6 +86,14 @@ export async function runFollowup(now = new Date()): Promise<number> {
       } else {
         console.warn(`[followup] ${mask(lead.wa_id)} fora da janela e sem FOLLOWUP_TEMPLATE_NAME — pulando.`);
         continue;
+      }
+      // Persiste no histórico: quando o lead responder "sim, podemos", o modelo
+      // precisa ver a pergunta do follow-up no contexto. O corpo do template
+      // aprovado é a própria MENSAGEM_RETENCAO, então vale pros dois canais.
+      try {
+        await recordAssistantMessage(lead.wa_id, MENSAGEM_RETENCAO);
+      } catch (e) {
+        console.error(`[followup] falha ao gravar follow-up no histórico de ${mask(lead.wa_id)}`, e);
       }
       await marcarEnviado(lead.wa_id);
       enviados++;

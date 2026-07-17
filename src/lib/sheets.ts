@@ -76,11 +76,16 @@ async function fetchAgendaData(): Promise<AgendaData | null> {
  * Bloco de agenda pra injetar no system prompt. NUNCA lança: em qualquer falha
  * (desconfigurado, rede, API), devolve '' e a Camila segue sem a agenda.
  */
+/** "Agora" no fuso da clínica (America/Sao_Paulo) — o Railway roda em UTC. */
+function agoraClinica(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+}
+
 export async function agendaContexto(): Promise<string> {
   try {
     const data = await fetchAgendaData();
     if (!data || data.psicologas.length === 0) return '';
-    return resumoDisponibilidade(data, {});
+    return resumoDisponibilidade(data, { hoje: agoraClinica() });
   } catch (e) {
     console.error('[sheets] agendaContexto falhou — seguindo sem agenda', e);
     return '';
