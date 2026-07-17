@@ -1,6 +1,7 @@
 import { query } from './db';
 import { runTriagem, type LeadExtraido } from './triagem';
 import { DEFAULT_PROMPT } from './default-prompt';
+import { agendaContexto } from './sheets';
 
 /** Quantas mensagens recentes reidratam o contexto da IA a cada turno. */
 const HISTORY_LIMIT = 30;
@@ -132,7 +133,11 @@ export async function computeReply(waId: string): Promise<TurnoResposta & { envi
   const history = await loadHistory(waId);
   // Substitui {FORM_URL} no system prompt pelo valor real (ou mantém placeholder
   // se não estiver configurado — nesse caso a IA acaba pedindo pra equipe).
-  const system = (await getActivePrompt()).replaceAll(FORM_URL_PLACEHOLDER, formUrl());
+  let system = (await getActivePrompt()).replaceAll(FORM_URL_PLACEHOLDER, formUrl());
+  // Anexa a agenda real (Google Sheets) quando configurada. Append em vez de
+  // placeholder: assim vale mesmo se o prompt ativo vier do app_config (DB).
+  const agenda = await agendaContexto();
+  if (agenda) system = `${system}\n\n${agenda}`;
   const result = await runTriagem({ system, messages: history });
   let resposta = result.resposta?.trim() || 'Desculpa, pode repetir? Não consegui entender.';
   // Cinto e suspensórios: se a IA marcou enviarForm e o link não veio, adiciona.
