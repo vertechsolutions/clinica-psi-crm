@@ -156,7 +156,7 @@ export function resumoDisponibilidade(data: AgendaData, opts: ResumoOpts = {}): 
     .map((a) => `${limpa(a.data)} ${limpa(a.hora)} ${limpa(a.psicologa)}${a.modalidade ? ` (${limpa(a.modalidade)})` : ''}`);
 
   return [
-    '[AGENDA DA CLÍNICA — fonte: planilha. Use para SUGERIR um horário concreto com uma psicóloga cuja tag bate com a modalidade do paciente (individual/casal/infanto) e depois confirme. NUNCA invente horário fora desta lista nem prometa sem confirmar.]',
+    '[AGENDA DA CLÍNICA — esta é a agenda OFICIAL da clínica (planilha atualizada). Você TEM autoridade para propor horário diretamente daqui: escolha uma psicóloga cuja tag bate com a modalidade do paciente (individual/casal/infanto) e OFEREÇA na hora um dia+horário dentro da janela dela — NÃO diga que vai "verificar com a equipe" quando este bloco está presente. Só não ofereça o que está em "Já reservado" nem horários fora das janelas. Quando o paciente aceitar o horário, siga direto para a confirmação com comprovante.]',
     linhaHoje,
     'Psicólogas, o que cada uma atende e janelas fixas:',
     ...(linhas.length ? linhas : ['- (nenhuma janela cadastrada — deixe a equipe confirmar)']),
