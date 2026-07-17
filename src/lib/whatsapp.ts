@@ -70,6 +70,22 @@ export function sendText(to: string, body: string): Promise<void> {
   });
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Envia várias mensagens em sequência (bolhas separadas), com um respiro entre
+ * elas pra parecer uma pessoa digitando. Usado com splitReply(). Se uma parte
+ * falha, propaga (o webhook loga e não persiste) — parte já enviada fica no chat.
+ */
+export async function sendTextSequence(to: string, parts: string[], delayMs = 900): Promise<void> {
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i]?.trim();
+    if (!p) continue;
+    await sendText(to, p);
+    if (i < parts.length - 1) await sleep(delayMs);
+  }
+}
+
 /**
  * Marca a mensagem como lida e liga o indicador "digitando". O typing some em 25s
  * ou quando a próxima mensagem é enviada — chame logo ao receber. Falha aqui não

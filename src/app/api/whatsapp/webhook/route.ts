@@ -6,6 +6,7 @@ import {
   markReadAndType,
   sendInternalAlert,
   sendText,
+  sendTextSequence,
 } from '@/lib/whatsapp';
 import {
   computeReply,
@@ -14,6 +15,7 @@ import {
   persistReply,
   recordUserMessage,
 } from '@/lib/conversation';
+import { splitReply } from '@/lib/split-message';
 import { transcribeAudio } from '@/lib/transcribe';
 import { hasDb } from '@/lib/db';
 
@@ -173,7 +175,9 @@ export async function POST(req: Request): Promise<Response> {
         await sendFallback(from, err);
         return;
       }
-      await sendText(from, turno.resposta); // se falhar, lança e não persiste a resposta
+      // Entrega em bolhas: se a resposta trouxe parágrafos ou ficou longa, manda
+      // 2–3 mensagens seguidas (UX de conversa). Se falhar, lança e não persiste.
+      await sendTextSequence(from, splitReply(turno.resposta));
       try {
         await persistReply(from, nome, turno); // grava só depois de entregar
       } catch (err) {
