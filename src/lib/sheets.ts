@@ -31,8 +31,9 @@ function serviceAccount(): { client_email: string; private_key: string } | null 
     if (!j.client_email || !j.private_key) return null;
     // env vars costumam escapar \n do private_key — normaliza
     return { client_email: j.client_email, private_key: j.private_key.replace(/\\n/g, '\n') };
-  } catch (e) {
-    console.error('[sheets] GOOGLE_SERVICE_ACCOUNT_JSON inválido', e);
+  } catch {
+    // NUNCA logar o erro cru aqui: o objeto pode carregar trechos da private key.
+    console.error('[sheets] GOOGLE_SERVICE_ACCOUNT_JSON inválido — verifique o formato JSON da env var.');
     return null;
   }
 }

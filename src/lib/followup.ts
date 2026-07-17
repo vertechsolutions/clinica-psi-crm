@@ -14,6 +14,9 @@ export const MENSAGEM_RETENCAO =
 const JANELA_MS = 24 * 60 * 60 * 1000;
 const MAX_FOLLOWUPS = 2; // no máximo 2 reengajamentos por lead
 
+/** LGPD: nunca logar o telefone inteiro. Só os últimos 4 dígitos pra referência. */
+const mask = (waId: string) => `***${waId.slice(-4)}`;
+
 export type Canal = 'freeform' | 'template';
 
 /** Decide o canal pelo tempo desde a última mensagem RECEBIDA do paciente. */
@@ -55,7 +58,7 @@ async function findColdLeads(): Promise<ColdLead[]> {
 async function marcarEnviado(waId: string): Promise<void> {
   await query(
     `UPDATE wa_conversations
-        SET followup_count = followup_count + 1, followup_last_at = now()
+        SET followup_count = followup_count + 1, followup_last_at = now(), updated_at = now()
       WHERE wa_id = $1`,
     [waId],
   );
@@ -74,13 +77,13 @@ export async function runFollowup(now = new Date()): Promise<number> {
       } else if (templateName) {
         await sendTemplate(lead.wa_id, templateName);
       } else {
-        console.warn(`[followup] ${lead.wa_id} fora da janela e sem FOLLOWUP_TEMPLATE_NAME — pulando.`);
+        console.warn(`[followup] ${mask(lead.wa_id)} fora da janela e sem FOLLOWUP_TEMPLATE_NAME — pulando.`);
         continue;
       }
       await marcarEnviado(lead.wa_id);
       enviados++;
     } catch (e) {
-      console.error(`[followup] falha ao reengajar ${lead.wa_id}`, e);
+      console.error(`[followup] falha ao reengajar ${mask(lead.wa_id)}`, e);
     }
   }
   if (enviados) console.log(`[followup] ${enviados} lead(s) reengajado(s).`);

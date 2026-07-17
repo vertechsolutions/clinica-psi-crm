@@ -66,7 +66,9 @@ export function splitReply(text: string, opts: SplitOpts = {}): string[] {
     if (p.length <= maxLen) parts.push(p);
     else parts.push(...splitBySentence(p, maxLen));
   }
-  if (parts.length === 0) return [clean];
+  // Fallback (só se os parágrafos ficaram todos vazios): garante o invariante de
+  // maxLen quebrando por frase em vez de devolver o texto cru.
+  if (parts.length === 0) parts.push(...splitBySentence(clean, maxLen));
 
   if (parts.length > maxParts) {
     const head = parts.slice(0, maxParts - 1);

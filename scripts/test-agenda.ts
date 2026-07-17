@@ -20,7 +20,7 @@ const gradeRows = [
 const agendaRows = [
   ['Data', 'Hora', 'Paciente', 'WhatsApp', 'Psicóloga', 'Modalidade', 'Tipo', 'Status', 'Valor (R$)', 'Pagamento', 'Nota Fiscal?', 'Observações'],
   ['15/07/2026', '18:00', 'Mariana Silva', '5527999998888', 'Bruna Ferreira', 'Individual', 'Avulsa', 'Confirmada', '75', 'Pix', 'Não', '1ª sessão'],
-  ['16/07/2026', '20:00', 'Ana e Rodrigo', '5527999996666', 'Bruna Ferreira', 'Casal', 'Avulsa', 'Cancelada', '150', 'Pix', 'Não', ''],
+  ['16/07/2026', '20:00', 'Ana e Rodrigo', '5527999996666', 'Bruna Ferreira', 'Casal', 'Avulsa', 'Cancelado', '150', 'Pix', 'Não', ''],
 ];
 
 const psic = parsePsicologas(psicRows);

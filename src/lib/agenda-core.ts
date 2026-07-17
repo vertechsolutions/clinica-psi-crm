@@ -44,6 +44,8 @@ export interface AgendaData {
 
 const cell = (r: string[], i: number) => (r[i] ?? '').toString().trim();
 const sim = (v: string) => /^s/i.test(v.trim()); // "Sim" -> true, "Não" -> false
+/** Sanitiza texto da planilha antes de injetar no prompt (anti prompt-injection). */
+const limpa = (s: string) => s.replace(/[\r\n[\]]/g, ' ').trim().slice(0, 120);
 
 export function parsePsicologas(rows: string[][]): Psicologa[] {
   return rows
@@ -119,16 +121,16 @@ export function resumoDisponibilidade(
     .filter((p) => capaz(p, mod))
     .map((p) => {
       const jan = gradeByNome.get(p.nome) ?? {};
-      const dias = DIAS.filter((d) => jan[d]).map((d) => `${d.slice(0, 3).toLowerCase()} ${jan[d]}`);
+      const dias = DIAS.filter((d) => jan[d]).map((d) => `${d.slice(0, 3).toLowerCase()} ${limpa(jan[d] as string)}`);
       if (!dias.length) return null;
-      return `- ${p.nome} (${p.abordagens}): ${dias.join(', ')}`;
+      return `- ${limpa(p.nome)} (${limpa(p.abordagens)}): ${dias.join(', ')}`;
     })
     .filter((x): x is string => Boolean(x));
 
   const ocupados = agenda
-    .filter((a) => a.status.toLowerCase() !== 'cancelada' && a.data && a.hora)
+    .filter((a) => !a.status.toLowerCase().startsWith('cancela') && a.data && a.hora)
     .slice(0, 12)
-    .map((a) => `${a.data} ${a.hora} ${a.psicologa}${a.modalidade ? ` (${a.modalidade})` : ''}`);
+    .map((a) => `${limpa(a.data)} ${limpa(a.hora)} ${limpa(a.psicologa)}${a.modalidade ? ` (${limpa(a.modalidade)})` : ''}`);
 
   const titulo = mod ? mod.toLowerCase() : 'individual';
   return [
