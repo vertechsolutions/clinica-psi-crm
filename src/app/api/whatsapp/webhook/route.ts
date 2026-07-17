@@ -231,7 +231,7 @@ interface WebhookMessage {
   id: string;
   type: string;
   text?: { body?: string };
-  audio?: { id?: string; mime_type?: string };
+  audio?: { id?: string; mime_type?: string; voice?: boolean };
   voice?: { id?: string; mime_type?: string };
   image?: { id?: string; mime_type?: string; caption?: string };
   document?: { id?: string; mime_type?: string; filename?: string; caption?: string };
