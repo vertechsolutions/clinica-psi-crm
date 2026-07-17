@@ -29,7 +29,11 @@ Sem `DATABASE_URL` a tela de teste funciona (usa Gemini direto); só o webhook f
 Calibrar o raciocínio contra o Gemini real (cenários de conversa):
 
 ```bash
-npx tsx --env-file=.env.local scripts/test-triagem.ts
+npx tsx --env-file=.env.local scripts/test-triagem.ts   # 10 cenários fixos (regressão)
+npx tsx --env-file=.env.local scripts/sim-conversa.ts   # simulação multi-turno (3 personas)
+npx tsx scripts/test-split.ts                           # unit: bolhas de mensagem
+npx tsx scripts/test-agenda.ts                          # unit: parsers/resumo da agenda
+npx tsx scripts/test-followup.ts                        # unit: janela de 24h do follow-up
 ```
 
 ## Deploy no Railway
@@ -61,6 +65,17 @@ criado sozinho no primeiro boot (`instrumentation.ts`).
 | `WHATSAPP_APP_SECRET` | App Dashboard → Settings → Basic → App Secret |
 | `ADMIN_API_KEY` | senha forte que você inventa (protege a tela e a exclusão de dados) |
 | `RAILPACK_NODE_VERSION` | `22` (Next 16 exige Node ≥ 20.9) |
+| `FORM_URL` | link público do Google Forms de triagem (sem ele o `{FORM_URL}` vaza literal) |
+| `NOTIFY_ALERT_NUMBERS` | números que recebem o alerta do handoff (E.164 sem `+`, vírgula) |
+| `GEMINI_TRANSCRIBE_MODEL` | `gemini-2.5-flash-lite` (transcrição de áudio, mais barato — opcional) |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | JSON da service account (uma linha) — agenda no Sheets (opcional) |
+| `AGENDA_SHEET_ID` | id da planilha `Cazule — Agenda` no Google Sheets (opcional) |
+| `FOLLOWUP_ENABLED` | `false` por padrão — reengajamento proativo é **opt-in** (`true` só com template aprovado) |
+| `FOLLOWUP_TEMPLATE_NAME` | nome do template Meta aprovado p/ reengajar fora da janela de 24h |
+
+> Sem `GOOGLE_SERVICE_ACCOUNT_JSON`/`AGENDA_SHEET_ID` o app funciona normal — a Camila
+> só não enxerga a agenda (diz que vai confirmar horário com a equipe). Diagnóstico da
+> integração: `npx tsx --env-file=.env.local scripts/test-sheets-live.ts`.
 
 > **Importante (fail-closed):** sem `WHATSAPP_APP_SECRET` o webhook recusa toda
 > mensagem; sem `ADMIN_API_KEY` os endpoints admin recusam acesso. Configure ambos.
@@ -117,8 +132,13 @@ durável pro webhook (resiliência a crash no meio do processamento).
 
 - `src/lib/default-prompt.ts` — o raciocínio padrão (persona, valores, fluxo, retenção).
 - `src/lib/triagem.ts` — chamada ao Gemini + extração da ficha (18 campos).
-- `src/lib/conversation.ts` — histórico, dedup, prompt ativo, orquestração do turno.
-- `src/lib/whatsapp.ts` — Graph API (enviar, marcar lida, "digitando", assinatura).
+- `src/lib/conversation.ts` — histórico, dedup, prompt ativo, agenda, orquestração do turno.
+- `src/lib/whatsapp.ts` — Graph API (enviar texto/sequência/template, lida, "digitando", assinatura, mídia).
+- `src/lib/split-message.ts` — quebra a resposta em 2–3 bolhas de WhatsApp.
+- `src/lib/transcribe.ts` — transcrição de áudio (Gemini multimodal).
+- `src/lib/agenda-core.ts` + `src/lib/sheets.ts` — agenda da clínica no Google Sheets
+  (parsers puros + Service Account com cache e fallback gracioso).
+- `src/lib/followup.ts` — reengajamento proativo de leads frios (opt-in, adiado no piloto).
 - `src/app/api/whatsapp/webhook/route.ts` — recebe e responde no WhatsApp.
 - `src/app/api/config/route.ts` — get/set do raciocínio ativo.
 - `src/lib/db.ts` + `src/lib/schema.ts` — Postgres (pool + tabelas).
