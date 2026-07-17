@@ -39,6 +39,14 @@ export async function initSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS pausada_em  TIMESTAMPTZ;
     `);
 
+    // Colunas de follow-up proativo: quantas vezes já reengajamos esse lead e
+    // quando foi a última — pra não spammar. Idempotente.
+    await client.query(`
+      ALTER TABLE wa_conversations
+        ADD COLUMN IF NOT EXISTS followup_count    INT NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS followup_last_at  TIMESTAMPTZ;
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS wa_messages (
         id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

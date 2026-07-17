@@ -26,6 +26,8 @@ export async function register(): Promise<void> {
     console.log('[boot] schema Postgres pronto.');
     const { scheduleCleanup } = await import('@/lib/maintenance');
     scheduleCleanup();
+    const { scheduleFollowup } = await import('@/lib/followup');
+    scheduleFollowup();
   } catch (err) {
     console.error('[boot] falha ao inicializar o schema:', err);
   }

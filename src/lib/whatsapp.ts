@@ -87,6 +87,21 @@ export async function sendTextSequence(to: string, parts: string[], delayMs = 90
 }
 
 /**
+ * Envia um template aprovado (Message Template da Meta). Necessário pra falar com
+ * um contato FORA da janela de 24h (reengajamento). `name` = nome do template
+ * aprovado; sem variáveis no corpo (o texto vive na Meta). lang default pt_BR.
+ */
+export function sendTemplate(to: string, name: string, lang = 'pt_BR'): Promise<void> {
+  return graphPost({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: { name, language: { code: lang } },
+  });
+}
+
+/**
  * Marca a mensagem como lida e liga o indicador "digitando". O typing some em 25s
  * ou quando a próxima mensagem é enviada — chame logo ao receber. Falha aqui não
  * deve travar o fluxo (best-effort).
