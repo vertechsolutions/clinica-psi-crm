@@ -125,6 +125,30 @@ independentes (código e segurança/LGPD). Principais entregas:
   como Planilhas Google no Drive do `camilaia@`) compartilhada com o e-mail da service
   account (Leitor) → `GOOGLE_SERVICE_ACCOUNT_JSON` + `AGENDA_SHEET_ID` no Railway.
 
+## Leva 3 — revisão e2e + replay dos logs reais (18/07/2026)
+
+- **Áudio quebrou em produção e foi corrigido**: `GEMINI_TRANSCRIBE_MODEL=gemini-2.5-flash-lite`
+  retornava 404 ("no longer available to new users"). A env foi REMOVIDA do Railway
+  (fallback: `gemini-2.5-flash`, que aceita áudio — validado). ⚠️ NUNCA setar modelo de
+  transcrição sem antes validar com `npx tsx --env-file=.env.local scripts/test-transcribe-live.ts`.
+- **Replay com logs reais** (`scripts/replay-conversas.ts`): re-roda as conversas reais do
+  Postgres (turnos de usuário) contra o prompt atual + agenda real, lado a lado com as
+  respostas antigas. Rode com `DATABASE_PUBLIC_URL` no ambiente (não commitar saída — LGPD).
+- **Prompt v10/v10.1** (a partir da avaliação Fable de 48 turnos reais): regra de janela
+  (manhã/tarde/noite), consistência da proposta (não trocar de psicóloga a cada turno),
+  datas de calendário só se escritas no bloco, anti-mimetismo (instruções vencem o
+  histórico do prompt velho — a IA chegou a copiar promessa de form pré-comprovante),
+  proibido "vou verificar a agenda... te aviso" com bloco presente, retomada de paciente
+  conhecido, nomes de psicólogas (2-3 compatíveis), mensagem ininteligível, cantada com
+  limite educado.
+- **Postgres**: o "deploy antigo" do serviço Postgres no Railway é só o container do banco
+  (não muda mesmo). Os DADOS são a memória da Camila (`wa_messages` → contexto do Gemini
+  via `loadHistory`; `wa_conversations` → ficha/handoff; `app_config` → prompt calibrável).
+- **Backlog identificado no replay** (padrões reais sem goal): debounce de mensagens
+  repetidas/ruído antes de acionar a IA; sinal interno de prioridade pra equipe em quadro
+  grave não-suicida (ex.: "ouço vozes"); bios curtas das psicólogas aprovadas pela Bruna;
+  cenário de teste "lead conhecido retorna dias depois".
+
 ## Armadilhas conhecidas (leia antes de deployar)
 
 ### 1. O prompt do WhatsApp pode não vir do código
