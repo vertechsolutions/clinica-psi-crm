@@ -149,6 +149,27 @@ independentes (código e segurança/LGPD). Principais entregas:
   grave não-suicida (ex.: "ouço vozes"); bios curtas das psicólogas aprovadas pela Bruna;
   cenário de teste "lead conhecido retorna dias depois".
 
+## Leva 4 — Pix automático + pipeline proativo (18/07/2026, v11+v12 NO AR, commit 87be570)
+
+- **Pix automático (v11)**: env `PIX_INFO` (⚠️ TESTE: celular da Bruna +55 27 98117-8233 —
+  trocar pela chave oficial via `railway variable set PIX_INFO=...`, sem deploy). Placeholder
+  `{PIX_INFO}` substituído em `computeReply` como o `{FORM_URL}`; sem env, fallback gracioso
+  (a Camila diz que vai encaminhar e a equipe manda manualmente). A Camila envia chave+valor
+  NA MESMA MENSAGEM em que o paciente escolhe avulsa/pacote e já pede o comprovante.
+- **Pipeline proativo (v12)**: seção "PIPELINE DA CONVERSA" no prompt — funil de 9 etapas;
+  TODA resposta engata a próxima etapa pendente; resposta passiva ("ok","sim") = sinal verde
+  pra avançar; "fico à disposição" proibido no meio do funil; acolhimento vem antes de
+  pergunta comercial quando há dor.
+- **Validação**: persona passiva no `sim-conversa.ts` (paciente que NUNCA pergunta) fechou o
+  funil inteiro em 11 turnos — valores → nome → queixa → horário real da agenda → Pix com
+  chave+valor → comprovante → form → handoff. Suíte `test-triagem` 11/11 (o harness agora
+  injeta agenda fake — sem ela a REGRA DURA trava o Passo 3 e cenários de agendamento não
+  fecham; lição importante pra testes futuros). `sim-conversa.ts` aceita filtro por nome de
+  persona via CLI (ex.: `npx tsx --env-file=.env.local scripts/sim-conversa.ts passivo`).
+- **Estado de produção**: funil 100% automático da primeira mensagem até o comprovante; a
+  equipe humana entra só pra conferir o pagamento e assumir após o handoff.
+- Mensagem de status pra Bruna pronta em `mensagem-bruna.md` (formatação WhatsApp).
+
 ## Armadilhas conhecidas (leia antes de deployar)
 
 ### 1. O prompt do WhatsApp pode não vir do código
