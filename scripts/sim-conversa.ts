@@ -24,8 +24,11 @@ import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { splitReply } from '../src/lib/split-message';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
 
-/** Espelha o computeReply: substitui {FORM_URL} pelo valor real quando setado. */
-const SYSTEM = DEFAULT_PROMPT.replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}');
+/** Espelha o computeReply: substitui {FORM_URL} e {PIX_INFO} pelos valores reais. */
+const SYSTEM = DEFAULT_PROMPT.replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}').replaceAll(
+  '{PIX_INFO}',
+  process.env.PIX_INFO || 'Chave Pix (celular): +55 27 98117-8233 — em nome de Bruna (Clínica Cazule)',
+);
 
 /**
  * Agenda fictícia gerada pela MESMA função do runtime (fidelidade máxima ao bloco
@@ -100,6 +103,22 @@ mensagem por vez. Responda SOMENTE com a próxima fala, sem aspas.`,
   encerra: () => false,
 };
 
+const PACIENTE_PASSIVO: Persona = {
+  nome: 'paciente-passivo (pipeline proativo)',
+  system: `Você simula um PACIENTE PASSIVO no WhatsApp de uma clínica de psicologia.
+Persona: Carlos, 35 anos, quer terapia individual por causa de estresse, mas é de POUCAS palavras:
+NUNCA faz perguntas, NUNCA puxa assunto; responde curto ("oi", "sim", "ok", "pode ser").
+Quando a atendente fizer uma pergunta específica, responda o mínimo: modalidade → "individual";
+nome → "Carlos Souza"; motivo → "estresse no trabalho"; disponibilidade → "à noite";
+dia/horário proposto → "pode ser"; avulsa ou pacote → "avulsa".
+Se ela mandar os dados do Pix e pedir comprovante, responda EXATAMENTE:
+"[o paciente enviou uma imagem/anexo pelo WhatsApp — se o pagamento acabou de ser combinado, é provavelmente o comprovante]".
+Se ela não perguntar nada, responda só "ok". Responda SOMENTE a próxima fala, sem aspas.`,
+  maxTurnos: 14,
+  encerra: (t) => t.some((x) => x.enviarForm),
+  comAgenda: true,
+};
+
 const PACIENTE_CASAL: Persona = {
   nome: 'paciente-casal-etapas-valores',
   system: `Você simula uma PACIENTE no WhatsApp de uma clínica de psicologia buscando TERAPIA DE CASAL.
@@ -167,10 +186,11 @@ async function main() {
     process.exit(1);
   }
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  await rodarPersona(ai, PACIENTE_INDIVIDUAL);
-  await rodarPersona(ai, INSISTENTE_SEM_AGENDA);
-  await rodarPersona(ai, PACIENTE_CASAL);
-  await rodarPersona(ai, LEAD_FRIO);
+  const personas = [PACIENTE_INDIVIDUAL, INSISTENTE_SEM_AGENDA, PACIENTE_CASAL, LEAD_FRIO, PACIENTE_PASSIVO];
+  const filtro = process.argv[2]; // opcional: roda só personas cujo nome contém o filtro
+  for (const p of personas) {
+    if (!filtro || p.nome.includes(filtro)) await rodarPersona(ai, p);
+  }
   console.log('\n\x1b[1mSimulação concluída. Revise as transcrições acima.\x1b[0m');
 }
 

@@ -124,6 +124,19 @@ function formUrl(): string {
 }
 
 /**
+ * Dados do Pix da clínica (goal: fechar o funil sem intervenção humana). Vem da
+ * env PIX_INFO; sem ela, o prompt recebe uma instrução de fallback (a Camila diz
+ * que vai encaminhar e a equipe assume) — nunca vaza placeholder cru.
+ */
+const PIX_INFO_PLACEHOLDER = '{PIX_INFO}';
+const PIX_FALLBACK =
+  '(dados do Pix ainda não configurados — diga que vai encaminhar os dados do pagamento em instantes; a equipe envia manualmente)';
+
+function pixInfo(): string {
+  return process.env.PIX_INFO?.trim() || PIX_FALLBACK;
+}
+
+/**
  * Calcula a resposta pra uma mensagem já persistida: monta o contexto e chama a
  * triagem. NÃO grava nada — quem chama grava a resposta só APÓS o envio ao
  * WhatsApp dar certo (via persistReply), pra o histórico nunca ter uma resposta
@@ -133,7 +146,9 @@ export async function computeReply(waId: string): Promise<TurnoResposta & { envi
   const history = await loadHistory(waId);
   // Substitui {FORM_URL} no system prompt pelo valor real (ou mantém placeholder
   // se não estiver configurado — nesse caso a IA acaba pedindo pra equipe).
-  let system = (await getActivePrompt()).replaceAll(FORM_URL_PLACEHOLDER, formUrl());
+  let system = (await getActivePrompt())
+    .replaceAll(FORM_URL_PLACEHOLDER, formUrl())
+    .replaceAll(PIX_INFO_PLACEHOLDER, pixInfo());
   // Anexa a agenda real (Google Sheets) quando configurada. Append em vez de
   // placeholder: assim vale mesmo se o prompt ativo vier do app_config (DB).
   const agenda = await agendaContexto();
@@ -147,8 +162,10 @@ export async function computeReply(waId: string): Promise<TurnoResposta & { envi
   if (result.enviarForm && !process.env.FORM_URL) {
     console.warn('[conversation] enviarForm=true mas FORM_URL não está setada — o paciente vai receber o placeholder.');
   }
-  // Nunca deixa o placeholder cru vazar
-  resposta = resposta.replaceAll(FORM_URL_PLACEHOLDER, formUrl());
+  // Nunca deixa placeholder cru vazar
+  resposta = resposta
+    .replaceAll(FORM_URL_PLACEHOLDER, formUrl())
+    .replaceAll(PIX_INFO_PLACEHOLDER, process.env.PIX_INFO?.trim() || '');
   return { resposta, lead: result.lead, pronto: result.pronto, enviarForm: result.enviarForm };
 }
 

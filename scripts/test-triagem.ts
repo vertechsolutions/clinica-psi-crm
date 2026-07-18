@@ -23,6 +23,33 @@ try {
 
 import { runTriagem, type TriagemResult } from '../src/lib/triagem';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
+import { resumoDisponibilidade } from '../src/lib/agenda-core';
+
+// Agenda fake gerada pela função real (mesmo formato da produção): sem ela a
+// REGRA DURA impede a Camila de confirmar horário/avançar ao pagamento, e os
+// cenários de agendamento/Pix não fecham. Janelas cobrem os pedidos dos cenários
+// (quarta à tarde = Fernanda; terça/quinta = Bruna).
+const AGENDA_FAKE = resumoDisponibilidade(
+  {
+    psicologas: [
+      { nome: 'Bruna Ferreira', crp: 'CRP 16/1', abordagens: 'TCC, Humanista', individual: true, casal: true, infanto: true, prefGenero: 'F', obs: '' },
+      { nome: 'Fernanda Alves', crp: 'CRP 16/2', abordagens: 'TCC, Psicanálise', individual: true, casal: true, infanto: false, prefGenero: 'F', obs: '' },
+    ],
+    grade: [
+      { nome: 'Bruna Ferreira', janelas: { Segunda: '14:00-19:00', 'Terça': '14:00-19:00', Quinta: '14:00-19:00' } },
+      { nome: 'Fernanda Alves', janelas: { Quarta: '13:00-17:00', Sexta: '13:00-17:00' } },
+    ],
+    agenda: [],
+  },
+  { hoje: new Date(2026, 6, 17) },
+);
+
+// espelha o computeReply: injeta os dados do Pix (valor de teste fixo) + agenda
+const SYSTEM =
+  DEFAULT_PROMPT.replaceAll(
+    '{PIX_INFO}',
+    'Chave Pix (celular): +55 27 98117-8233 — em nome de Bruna (Clínica Cazule)',
+  ) + `\n\n${AGENDA_FAKE}`;
 
 type Turno = { fala: string; res: TriagemResult };
 
@@ -173,6 +200,24 @@ const cenarios: Cenario[] = [
     },
   },
   {
+    nome: 'escolheu pacote -> envia dados do Pix na hora e pede comprovante',
+    falas: [
+      'oi, quero agendar uma sessao individual',
+      'sou a Carla Dias, ansiedade no trabalho, meu whatsapp e 11 96666-5555, posso quartas a tarde',
+      'pode ser quarta as 15h sim',
+      'prefiro o pacote mensal',
+    ],
+    checar: (t) => {
+      const todas = todasRespostas(t);
+      const temPix = /98117-8233|981178233/.test(todas);
+      const pedeComprovante = /comprovante/i.test(todas);
+      return {
+        ok: temPix && pedeComprovante,
+        nota: `pixNaResposta=${temPix} pedeComprovante=${pedeComprovante} | ultima="${ultimo(t).resposta.slice(0, 140)}"`,
+      };
+    },
+  },
+  {
     nome: 'comprovante em imagem -> confirma e marca enviarForm',
     falas: [
       'oi, quero agendar uma sessao individual',
@@ -200,7 +245,7 @@ async function rodarCenario(c: Cenario): Promise<boolean> {
   const turnos: Turno[] = [];
   for (const fala of c.falas) {
     history.push({ role: 'user', content: fala });
-    const res = await runTriagem({ system: DEFAULT_PROMPT, messages: history });
+    const res = await runTriagem({ system: SYSTEM, messages: history });
     history.push({ role: 'assistant', content: res.resposta });
     turnos.push({ fala, res });
     console.log(`  [36mpaciente:[0m ${fala}`);
