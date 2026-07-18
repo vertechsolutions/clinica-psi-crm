@@ -56,20 +56,20 @@ async function main() {
   // transcribeAudio nunca lança — mas LOGA o erro real no console. Silêncio deve
   // voltar null SEM log de "[transcribe] falha". Interceptamos o console.error
   // pra transformar erro de API em falha do teste.
-  let apiError: string | null = null;
+  const apiErrors: string[] = [];
   const origError = console.error;
   console.error = (...args: unknown[]) => {
     const s = args.map(String).join(' ');
-    if (/\[transcribe\] falha/.test(s)) apiError = s;
+    if (/\[transcribe\] falha/.test(s)) apiErrors.push(s);
     origError(...args);
   };
 
   const out = await transcribeAudio(wavSilencio(1), 'audio/wav');
   console.error = origError;
 
-  if (apiError) {
+  if (apiErrors.length > 0) {
     console.error('\nFALHOU — o modelo rejeitou a chamada de áudio:');
-    console.error(apiError.slice(0, 400));
+    console.error(apiErrors[0].slice(0, 400));
     console.error('\nCorrija GEMINI_TRANSCRIBE_MODEL (ou remova pra usar o default).');
     process.exit(1);
   }
