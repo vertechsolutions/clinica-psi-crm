@@ -205,6 +205,34 @@ DEVOLVE a decisão, a Camila não tinha instrução de decidir e colapsava na re
   turno exato do bug a Camila agora sugere TCC direto, e a trava agiu ao vivo na conversa
   do paciente que repetia a mesma frase.
 
+## Leva 6 — Nome completo + comprovante lido de verdade + alerta com checklist (20/07/2026, v14, commit fceb42b)
+
+Do teste real do Murilo (49999551051): "Murilo M" passou como nome completo e um comprovante
+qualquer disparou o handoff. Três entregas:
+
+- **Nome completo (prompt v14)**: nome de 1 palavra ou com inicial ("Murilo M") → a Camila pede
+  UMA vez o nome completo ("é pra ficha da psicóloga 😊") e segue mesmo sem resposta (não trava).
+- **Comprovante LIDO (Gemini vision)**: `src/lib/comprovante.ts` (análise da imagem/PDF:
+  ehComprovante, valor, nomeDestinatario, chaveDestino, instituição, data) +
+  `src/lib/comprovante-core.ts` (puro: `verificarDestinatario` — chave por sufixo de 8 dígitos,
+  e-mail por containment, nome só como sinal fraco; `montarMarcadorComprovante` — marcador rico
+  que substitui a imagem no histórico; `chaveEsperada` — env `PIX_CHAVE` opcional, senão deriva
+  da `PIX_INFO`). O prompt valida o VALOR contra a opção combinada (só ele sabe o que foi
+  escolhido); **backstop no webhook**: chave não confere OU não-é-comprovante + modelo marcou
+  enviarForm → suprimido por código (log `[comprovante] enviarForm suprimido`). **Fail-open**:
+  análise falhou → fluxo antigo (marcador simples) + "⚠️ conferir manualmente" no alerta.
+- **Alerta de handoff virou notificação de trabalho** ("Camila (IA) concluiu mais uma triagem
+  automática!"): ficha + linha do comprovante (valor lido + veredito da chave) + checklist
+  (1 conferir pagamento, 2 conferir formulário, 3 ajustar horário no PsicoManager). Destinos
+  seguem em `NOTIFY_ALERT_NUMBERS` — adicionar o celular da Camila humana é `railway variable set`.
+- **Validação**: units novos `test-comprovante-core` ✔; suíte com 15 cenários (3 novos: nome
+  incompleto 3/3, valor errado 3/3 — "o comprovante veio de R$ 550, mas o combinado foi R$ 75" —
+  e chave errada bloqueada); persona passiva fechou o funil em 9 turnos no v14 (fail-open ok e,
+  de bônus, não re-perguntou "avulsa ou pacote" já respondido). Obs.: rede local instável na
+  sessão gerou "fetch failed" esporádicos nos testes — não é bug do produto.
+- **Diagnóstico com comprovante real**: `npx tsx --env-file=.env.local scripts/test-comprovante-live.ts <imagem-ou-pdf>`
+  mostra a análise + o marcador exato que a Camila veria.
+
 ## Armadilhas conhecidas (leia antes de deployar)
 
 ### 1. O prompt do WhatsApp pode não vir do código
