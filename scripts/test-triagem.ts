@@ -25,6 +25,19 @@ import { type TriagemResult } from '../src/lib/triagem';
 import { runTriagemSemRepeticao, ehRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
+import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/comprovante-core';
+
+// Análise de comprovante VÁLIDA (avulsa individual, chave da clínica) — os
+// cenários derivam variações dela. Usa a MESMA função da produção pra montar
+// o marcador: fixture nunca desvia do que o webhook injeta de verdade.
+const ANALISE_OK: AnaliseComprovante = {
+  ehComprovante: true,
+  valor: 75,
+  nomeDestinatario: 'Bruna Amorim',
+  chaveDestino: '+55 27 98117-8233',
+  instituicao: 'Nubank',
+  dataHora: '20/07/2026 15:10',
+};
 
 // Agenda fake gerada pela função real (mesmo formato da produção): sem ela a
 // REGRA DURA impede a Camila de confirmar horário/avançar ao pagamento, e os
@@ -249,13 +262,62 @@ const cenarios: Cenario[] = [
       'meu whatsapp e 11 96666-5555 e consigo quartas a tarde',
       'pode agendar sim, obrigada',
       'pode ser quarta as 15h, prefiro a sessao avulsa',
-      '[o paciente enviou uma imagem/anexo pelo WhatsApp — se o pagamento acabou de ser combinado, é provavelmente o comprovante]',
+      montarMarcadorComprovante(ANALISE_OK, 'confere'),
     ],
     checar: (t) => {
       const enviou = t.some((x) => x.res.enviarForm);
       return {
         ok: enviou,
         nota: `enviarForm=${enviou} | ultimaResposta="${ultimo(t).resposta.slice(0, 140)}"`,
+      };
+    },
+  },
+  {
+    nome: 'nome incompleto -> pede o nome completo uma vez e segue',
+    falas: ['oi, quero agendar uma sessao individual', 'meu nome é Murilo M', 'Murilo Martins Nunes'],
+    checar: (t) => {
+      const aposIncompleto = t[1].res.resposta;
+      const pediu = /nome complet/i.test(aposIncompleto);
+      const nomeFinal = t[t.length - 1].res.lead.nome || '';
+      const capturou = /martins/i.test(nomeFinal);
+      return { ok: pediu && capturou, nota: `pediuCompleto=${pediu} nomeFinal="${nomeFinal}"` };
+    },
+  },
+  {
+    nome: 'comprovante com VALOR errado -> aponta e NAO envia form',
+    falas: [
+      'oi, quero agendar uma sessao individual',
+      'sou a Carla Dias, ansiedade no trabalho, meu whatsapp e 11 96666-5555, posso quartas a tarde',
+      'pode ser quarta as 15h sim',
+      'prefiro a sessao avulsa',
+      montarMarcadorComprovante({ ...ANALISE_OK, valor: 550 }, 'confere'), // pagou 550, combinado 75
+    ],
+    checar: (t) => {
+      const enviou = t.some((x) => x.res.enviarForm);
+      const ultima = t[t.length - 1].res.resposta;
+      const apontou = /valor|R\$/i.test(ultima) && /verific|confer|diferen/i.test(ultima);
+      return {
+        ok: !enviou && apontou,
+        nota: `enviarForm=${enviou} apontouValor=${apontou} | ultima="${ultima.slice(0, 140)}"`,
+      };
+    },
+  },
+  {
+    nome: 'comprovante com CHAVE errada -> nao confirma e reenvia o Pix',
+    falas: [
+      'oi, quero agendar uma sessao individual',
+      'sou a Carla Dias, ansiedade no trabalho, meu whatsapp e 11 96666-5555, posso quartas a tarde',
+      'pode ser quarta as 15h sim',
+      'prefiro a sessao avulsa',
+      montarMarcadorComprovante({ ...ANALISE_OK, chaveDestino: '+55 11 91234-5678' }, 'nao_confere'),
+    ],
+    checar: (t) => {
+      const enviou = t.some((x) => x.res.enviarForm);
+      const ultima = t[t.length - 1].res.resposta;
+      const avisou = /destinat|outra? (conta|chave)|chave( pix)? diferente|diferente da nossa|n[ãa]o confere/i.test(ultima);
+      return {
+        ok: !enviou && avisou,
+        nota: `enviarForm=${enviou} avisouDestinatario=${avisou} | ultima="${ultima.slice(0, 140)}"`,
       };
     },
   },
