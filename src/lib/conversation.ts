@@ -1,5 +1,6 @@
 import { query } from './db';
-import { runTriagem, type LeadExtraido } from './triagem';
+import { type LeadExtraido } from './triagem';
+import { runTriagemSemRepeticao } from './anti-repeat';
 import { DEFAULT_PROMPT } from './default-prompt';
 import { agendaContexto } from './sheets';
 
@@ -153,7 +154,7 @@ export async function computeReply(waId: string): Promise<TurnoResposta & { envi
   // placeholder: assim vale mesmo se o prompt ativo vier do app_config (DB).
   const agenda = await agendaContexto();
   if (agenda) system = `${system}\n\n${agenda}`;
-  const result = await runTriagem({ system, messages: history });
+  const result = await runTriagemSemRepeticao({ system, messages: history });
   let resposta = result.resposta?.trim() || 'Desculpa, pode repetir? Não consegui entender.';
   // Cinto e suspensórios: se a IA marcou enviarForm e o link não veio, adiciona.
   if (result.enviarForm && !resposta.includes(formUrl()) && process.env.FORM_URL) {
