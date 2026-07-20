@@ -17,6 +17,14 @@ import {
 } from '@/lib/conversation';
 import { splitReply } from '@/lib/split-message';
 import { transcribeAudio } from '@/lib/transcribe';
+import { analisarComprovante } from '@/lib/comprovante';
+import {
+  chaveEsperada,
+  montarMarcadorComprovante,
+  verificarDestinatario,
+  type AnaliseComprovante,
+  type VerificacaoDestinatario,
+} from '@/lib/comprovante-core';
 import { hasDb } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -69,35 +77,47 @@ export async function GET(req: Request): Promise<Response> {
   return new Response('Forbidden', { status: 403 });
 }
 
+interface ExtractResult {
+  texto: string | null;
+  /** presente só quando a mensagem era imagem/documento (análise de comprovante) */
+  comprovante?: { analise: AnaliseComprovante | null; verificacao: VerificacaoDestinatario };
+}
+
 /**
  * Extrai o texto útil da mensagem recebida. Áudio é transcrito via Gemini e
- * volta como "[áudio transcrito]: ...". Imagem/documento viram um marcador de
- * anexo (a IA interpreta como comprovante no contexto de pagamento). Outros
- * tipos devolvem null e o webhook responde pedindo texto.
+ * volta como "[áudio transcrito]: ...". Imagem/documento são ANALISADOS
+ * (Gemini vision lê valor/destinatário do comprovante) e viram um marcador
+ * rico com o veredito — em falha de análise, fail-open (marcador simples, a
+ * equipe confere). Outros tipos devolvem null e o webhook pede texto.
  */
-async function extractText(msg: WebhookMessage): Promise<string | null> {
+async function extractText(msg: WebhookMessage): Promise<ExtractResult> {
   if (msg.type === 'text') {
-    return msg.text?.body?.trim() || null;
+    return { texto: msg.text?.body?.trim() || null };
   }
   if (msg.type === 'audio' || msg.type === 'voice') {
     const mediaId = msg.audio?.id || msg.voice?.id;
-    if (!mediaId) return null;
+    if (!mediaId) return { texto: null };
     const media = await downloadMedia(mediaId);
-    if (!media) return null;
+    if (!media) return { texto: null };
     const text = await transcribeAudio(media.bytes, media.mimeType);
-    if (!text) return null;
+    if (!text) return { texto: null };
     // marca no histórico que veio de áudio (útil pra revisão + a IA pode ler)
-    return `[áudio transcrito]: ${text}`;
+    return { texto: `[áudio transcrito]: ${text}` };
   }
   if (msg.type === 'image' || msg.type === 'document') {
-    // Não "lemos" a imagem, mas sinalizamos pra Camila que chegou um anexo, com
-    // a legenda se houver. No contexto de pagamento ela interpreta como o
-    // comprovante e dispara o handoff (enviarForm); fora disso responde natural.
+    const mediaId = msg.image?.id || msg.document?.id;
+    const mime = msg.image?.mime_type || msg.document?.mime_type || 'image/jpeg';
+    let analise: AnaliseComprovante | null = null;
+    if (mediaId) {
+      const media = await downloadMedia(mediaId);
+      if (media) analise = await analisarComprovante(media.bytes, media.mimeType || mime);
+    }
+    const verificacao = analise ? verificarDestinatario(analise, chaveEsperada()) : 'inconclusivo';
+    const marca = montarMarcadorComprovante(analise, verificacao);
     const caption = (msg.image?.caption || msg.document?.caption)?.trim();
-    const marca = '[o paciente enviou uma imagem/anexo pelo WhatsApp — se o pagamento acabou de ser combinado, é provavelmente o comprovante]';
-    return caption ? `${marca} Legenda: ${caption}` : marca;
+    return { texto: caption ? `${marca} Legenda: ${caption}` : marca, comprovante: { analise, verificacao } };
   }
-  return null;
+  return { texto: null };
 }
 
 /**
@@ -144,7 +164,7 @@ export async function POST(req: Request): Promise<Response> {
       // gravamos a mensagem entrante pro histórico (útil pra Bruna revisar).
       const paused = await isPaused(from);
 
-      const texto = await extractText(msg);
+      const { texto, comprovante } = await extractText(msg);
 
       if (texto == null) {
         // mídia que a gente não trata (áudio ilegível, sticker, vídeo, etc.)
@@ -175,6 +195,17 @@ export async function POST(req: Request): Promise<Response> {
         await sendFallback(from, err);
         return;
       }
+      // Backstop: o modelo marcou enviarForm mas a análise do anexo deste turno
+      // diz que NÃO é comprovante válido (chave de outro destinatário ou não-
+      // comprovante) → suprime o handoff por código, independente do prompt.
+      const anexoInvalido =
+        comprovante && (comprovante.verificacao === 'nao_confere' || comprovante.analise?.ehComprovante === false);
+      if (turno.enviarForm && anexoInvalido) {
+        console.warn(
+          `[comprovante] enviarForm suprimido: anexo inválido (verificacao=${comprovante.verificacao}, ehComprovante=${comprovante.analise?.ehComprovante}).`,
+        );
+        turno = { ...turno, enviarForm: false };
+      }
       // Entrega em bolhas: se a resposta trouxe parágrafos ou ficou longa, manda
       // 2–3 mensagens seguidas (UX de conversa). Se falhar, lança e não persiste.
       await sendTextSequence(from, splitReply(turno.resposta));
@@ -187,7 +218,7 @@ export async function POST(req: Request): Promise<Response> {
       // Handoff: IA sinalizou envio do form → pausa + notifica equipe.
       if (turno.enviarForm) {
         await pauseConversation(from);
-        await notifyTeam(from, nome, turno);
+        await notifyTeam(from, nome, turno, comprovante);
       }
     } catch (err) {
       console.error('[webhook] erro ao processar mensagem', err);
@@ -197,11 +228,32 @@ export async function POST(req: Request): Promise<Response> {
   return new Response('ok', { status: 200 });
 }
 
-/** Manda alerta pra equipe (Bruna + dev em teste) com resumo da ficha do lead. */
+/** Linha do comprovante no alerta: valor lido + veredito da chave. */
+function linhaComprovante(
+  c?: { analise: AnaliseComprovante | null; verificacao: VerificacaoDestinatario },
+): string {
+  if (!c) return '💰 Comprovante: recebido em turno anterior — conferir na conversa.';
+  if (!c.analise) return '💰 Comprovante: ⚠️ SEM validação automática — conferir valor e destinatário manualmente.';
+  const v = c.analise.valor != null ? `R$ ${c.analise.valor.toFixed(2).replace('.', ',')}` : 'valor não legível';
+  const chave =
+    c.verificacao === 'confere'
+      ? 'chave confere ✔'
+      : c.verificacao === 'nao_confere'
+        ? 'CHAVE NÃO CONFERE ⚠️'
+        : 'chave não confirmada ⚠️';
+  return `💰 Comprovante: ${v} (${chave})`;
+}
+
+/**
+ * Notificação de trabalho pra equipe (celular da Camila humana + Bruna, via
+ * NOTIFY_ALERT_NUMBERS): ficha do paciente + status do comprovante + checklist
+ * do que fazer (pagamento → formulário → PsicoManager).
+ */
 async function notifyTeam(
   waId: string,
   nome: string | undefined,
   turno: Awaited<ReturnType<typeof computeReply>>,
+  comprovante?: { analise: AnaliseComprovante | null; verificacao: VerificacaoDestinatario },
 ): Promise<void> {
   const recipients = alertRecipients();
   if (recipients.length === 0) {
@@ -210,16 +262,24 @@ async function notifyTeam(
   }
   const lead = turno.lead;
   const linhas = [
-    '🩵 *Novo formulário enviado — Cazule*',
-    `Paciente: ${lead.nome || nome || '(sem nome)'}`,
-    `WhatsApp: +${waId}`,
-    lead.telefone ? `Telefone informado: ${lead.telefone}` : null,
-    lead.email ? `E-mail: ${lead.email}` : null,
-    lead.disponibilidade ? `Disponibilidade: ${lead.disponibilidade}` : null,
-    lead.preferenciaAbordagem ? `Preferência: ${lead.preferenciaAbordagem}` : null,
-    lead.resumo ? `Queixa: ${lead.resumo}` : lead.motivacao ? `Motivação: ${lead.motivacao}` : null,
+    '🩵 *Camila (IA) concluiu mais uma triagem automática!*',
     '',
-    'A IA foi pausada nesse número. Assumam pelo WhatsApp da clínica.',
+    `👤 Paciente: ${lead.nome || nome || '(sem nome)'}`,
+    `📱 WhatsApp: +${waId}`,
+    lead.telefone ? `☎️ Telefone informado: ${lead.telefone}` : null,
+    lead.email ? `✉️ E-mail: ${lead.email}` : null,
+    lead.disponibilidade ? `🗓️ Horário/disponibilidade: ${lead.disponibilidade}` : null,
+    lead.preferenciaAbordagem ? `🧠 Preferência: ${lead.preferenciaAbordagem}` : null,
+    lead.resumo ? `📝 Queixa: ${lead.resumo}` : lead.motivacao ? `📝 Motivação: ${lead.motivacao}` : null,
+    linhaComprovante(comprovante),
+    '📋 Formulário de triagem enviado ao paciente.',
+    '',
+    '*Próximos passos:*',
+    '1️⃣ Conferir o pagamento na conta',
+    '2️⃣ Confirmar o preenchimento do formulário',
+    '3️⃣ Ajustar o horário no PsicoManager',
+    '',
+    'A IA está pausada nesse número — a conversa agora é de vocês. 💙',
   ].filter(Boolean) as string[];
   const body = linhas.join('\n');
   await Promise.all(recipients.map((to) => sendInternalAlert(to, body)));
