@@ -144,7 +144,10 @@ const cenarios: Cenario[] = [
       'sou o Lucas Pereira',
       'ja fiz terapia ha uns anos, foi bom, me ajudou bastante',
       'gostaria de uma psicologa, e se possivel TCC',
-      'consigo nas segundas de manha',
+      // segundas à TARDE: janela real da agenda fake (Bruna seg 14-19). Com "de
+      // manhã" a Camila corretamente nega o horário (REGRA DE JANELA) e a conversa
+      // trava sem slot viável — o cenário quer testar extração, não conflito de janela.
+      'consigo nas segundas a tarde',
       'meu whatsapp e 21 97777-6666',
       'em caso de emergencia pode falar com minha irma Ana, 21 95555-4444',
       'pode seguir, obrigado',
