@@ -223,8 +223,9 @@ qualquer disparou o handoff. Três entregas:
   análise falhou → fluxo antigo (marcador simples) + "⚠️ conferir manualmente" no alerta.
 - **Alerta de handoff virou notificação de trabalho** ("Camila (IA) concluiu mais uma triagem
   automática!"): ficha + linha do comprovante (valor lido + veredito da chave) + checklist
-  (1 conferir pagamento, 2 conferir formulário, 3 ajustar horário no PsicoManager). Destinos
-  seguem em `NOTIFY_ALERT_NUMBERS` — adicionar o celular da Camila humana é `railway variable set`.
+  (1 conferir pagamento, 2 conferir formulário, 3 ajustar horário no PsicoManager). Quem recebe
+  e intervém é a BRUNA AMORIM (psicóloga, +55 27 98117-8233 — já está em `NOTIFY_ALERT_NUMBERS`
+  junto com o Murilo). "Camila" é só o nome fictício da IA.
 - **Validação**: units novos `test-comprovante-core` ✔; suíte com 15 cenários (3 novos: nome
   incompleto 3/3, valor errado 3/3 — "o comprovante veio de R$ 550, mas o combinado foi R$ 75" —
   e chave errada bloqueada); persona passiva fechou o funil em 9 turnos no v14 (fail-open ok e,

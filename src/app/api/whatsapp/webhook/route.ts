@@ -245,9 +245,9 @@ function linhaComprovante(
 }
 
 /**
- * Notificação de trabalho pra equipe (celular da Camila humana + Bruna, via
- * NOTIFY_ALERT_NUMBERS): ficha do paciente + status do comprovante + checklist
- * do que fazer (pagamento → formulário → PsicoManager).
+ * Notificação de trabalho pra Bruna Amorim (psicóloga, quem intervém após o
+ * handoff) + dev, via NOTIFY_ALERT_NUMBERS: ficha do paciente + status do
+ * comprovante + checklist (pagamento → formulário → PsicoManager).
  */
 async function notifyTeam(
   waId: string,
