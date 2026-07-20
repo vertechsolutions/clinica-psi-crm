@@ -21,7 +21,8 @@ try {
   }
 } catch {}
 
-import { runTriagem, type TriagemResult } from '../src/lib/triagem';
+import { type TriagemResult } from '../src/lib/triagem';
+import { runTriagemSemRepeticao, ehRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
 
@@ -218,6 +219,26 @@ const cenarios: Cenario[] = [
     },
   },
   {
+    nome: 'devolveu a decisão -> Camila SUGERE uma abordagem e não repete (bug 19/07)',
+    falas: [
+      'oi, é pra terapia de casal',
+      'nosso maior problema são as brigas',
+      'qual a melhor abordagem pra o nosso caso?',
+      'não entendo, seria melhor vocês sugerirem',
+    ],
+    checar: (t) => {
+      const ultima = t[t.length - 1].res.resposta;
+      const penultima = t[t.length - 2].res.resposta;
+      const repetiu = ehRepeticao(ultima, penultima);
+      const sugeriu = /tcc|cognitivo|humanist|psican/i.test(ultima);
+      const devolveuPergunta = /vocês preferem|voces preferem|prefere alguma|quer(em)? que eu sugira/i.test(ultima);
+      return {
+        ok: !repetiu && sugeriu && !devolveuPergunta,
+        nota: `repetiu=${repetiu} sugeriuAbordagem=${sugeriu} devolveuPergunta=${devolveuPergunta} | ultima="${ultima.slice(0, 140)}"`,
+      };
+    },
+  },
+  {
     nome: 'comprovante em imagem -> confirma e marca enviarForm',
     falas: [
       'oi, quero agendar uma sessao individual',
@@ -245,7 +266,7 @@ async function rodarCenario(c: Cenario): Promise<boolean> {
   const turnos: Turno[] = [];
   for (const fala of c.falas) {
     history.push({ role: 'user', content: fala });
-    const res = await runTriagem({ system: SYSTEM, messages: history });
+    const res = await runTriagemSemRepeticao({ system: SYSTEM, messages: history });
     history.push({ role: 'assistant', content: res.resposta });
     turnos.push({ fala, res });
     console.log(`  [36mpaciente:[0m ${fala}`);

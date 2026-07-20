@@ -26,7 +26,7 @@ try {
 } catch {}
 
 import { Client } from 'pg';
-import { runTriagem } from '../src/lib/triagem';
+import { runTriagemSemRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { splitReply } from '../src/lib/split-message';
 import { agendaContexto } from '../src/lib/sheets';
@@ -88,7 +88,7 @@ async function main() {
         if (turnos < MAX_TURNOS_POR_CONVERSA) {
           history.push({ role: 'user', content: m.content });
           try {
-            const res = await runTriagem({ system, messages: history });
+            const res = await runTriagemSemRepeticao({ system, messages: history });
             const bolhas = splitReply(res.resposta);
             console.log(`\n[turno ${turnos + 1}] paciente: ${m.content.slice(0, 160)}`);
             console.log(`  ANTIGA: ${antiga.slice(0, 220)}`);

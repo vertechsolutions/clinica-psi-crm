@@ -19,7 +19,7 @@ try {
 } catch {}
 
 import { GoogleGenAI } from '@google/genai';
-import { runTriagem } from '../src/lib/triagem';
+import { runTriagemSemRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { splitReply } from '../src/lib/split-message';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
@@ -119,6 +119,19 @@ Se ela não perguntar nada, responda só "ok". Responda SOMENTE a próxima fala,
   comAgenda: true,
 };
 
+const PACIENTE_INDECISO: Persona = {
+  nome: 'paciente-indeciso-devolve-decisoes (anti-repetição)',
+  system: `Você simula uma PACIENTE no WhatsApp de uma clínica de psicologia buscando TERAPIA DE CASAL.
+Persona: Paula, 31 anos, casada, brigas constantes com o marido. Ela NUNCA decide nada sozinha:
+sempre que a atendente oferecer opções ou perguntar preferência, devolva a decisão com variações de
+"não sei, o que você acha melhor?", "seria melhor você sugerir", "tanto faz, me indica você".
+Se a atendente sugerir algo concreto (uma abordagem, um horário), aceite ("pode ser esse então").
+Escreva curto, PT-BR, uma mensagem por vez. Responda SOMENTE com a próxima fala, sem aspas.`,
+  maxTurnos: 8,
+  encerra: () => false,
+  comAgenda: true,
+};
+
 const PACIENTE_CASAL: Persona = {
   nome: 'paciente-casal-etapas-valores',
   system: `Você simula uma PACIENTE no WhatsApp de uma clínica de psicologia buscando TERAPIA DE CASAL.
@@ -156,12 +169,12 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
   const transcript: Turno[] = [];
 
   const system = persona.comAgenda ? SYSTEM_COM_AGENDA : SYSTEM;
-  let ultimo: Awaited<ReturnType<typeof runTriagem>> | null = null;
+  let ultimo: Awaited<ReturnType<typeof runTriagemSemRepeticao>> | null = null;
   for (let i = 0; i < persona.maxTurnos; i++) {
     const fala = await proximaFalaPaciente(ai, persona, transcript);
     if (!fala) break;
     history.push({ role: 'user', content: fala });
-    const res = await runTriagem({ system, messages: history });
+    const res = await runTriagemSemRepeticao({ system, messages: history });
     ultimo = res;
     history.push({ role: 'assistant', content: res.resposta });
     const bolhas = splitReply(res.resposta);
@@ -186,7 +199,7 @@ async function main() {
     process.exit(1);
   }
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const personas = [PACIENTE_INDIVIDUAL, INSISTENTE_SEM_AGENDA, PACIENTE_CASAL, LEAD_FRIO, PACIENTE_PASSIVO];
+  const personas = [PACIENTE_INDIVIDUAL, INSISTENTE_SEM_AGENDA, PACIENTE_CASAL, LEAD_FRIO, PACIENTE_PASSIVO, PACIENTE_INDECISO];
   const filtro = process.argv[2]; // opcional: roda só personas cujo nome contém o filtro
   for (const p of personas) {
     if (!filtro || p.nome.includes(filtro)) await rodarPersona(ai, p);
