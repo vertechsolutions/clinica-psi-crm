@@ -273,6 +273,25 @@ function normalize(raw: unknown): TriagemResult {
 }
 
 /**
+ * O modelo às vezes emite o JSON com quebras de linha LITERAIS dentro das
+ * strings (inválido — visto em produção/simulação 20/07). Tenta o parse direto
+ * e, se falhar, re-tenta com as quebras escapadas (recupera resposta E ficha)
+ * e por fim com as quebras achatadas. null = irrecuperável.
+ */
+export function parseSaidaModelo(text: string): unknown | null {
+  try {
+    return JSON.parse(text);
+  } catch {}
+  try {
+    return JSON.parse(text.replace(/\r?\n/g, '\\n'));
+  } catch {}
+  try {
+    return JSON.parse(text.replace(/\s*\r?\n\s*/g, ' '));
+  } catch {}
+  return null;
+}
+
+/**
  * Roda um turno da triagem. Fonte unica usada pela route (/api/chat) e pelo
  * harness de testes (scripts/test-triagem.ts). Lanca em erro permanente; o
  * caller decide a mensagem amigavel.
@@ -302,12 +321,13 @@ export async function runTriagem({ system, messages }: TriagemInput): Promise<Tr
         },
       });
       const text = resp.text ?? '';
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        // modelo vazou texto fora do JSON: devolve como fala, sem lead
-        return { resposta: text, lead: { ...EMPTY_LEAD }, pronto: false, enviarForm: false };
+      const parsed = parseSaidaModelo(text);
+      if (parsed === null) {
+        // Irrecuperável. Se PARECE JSON, NUNCA manda cru pro paciente (bug visto
+        // em simulação 20/07): resposta vazia vira a mensagem amigável no caller.
+        const pareceJson = text.trimStart().startsWith('{');
+        if (pareceJson) console.error('[triagem] saída JSON irrecuperável — suprimida (não vaza pro paciente)');
+        return { resposta: pareceJson ? '' : text, lead: { ...EMPTY_LEAD }, pronto: false, enviarForm: false };
       }
       return normalize(parsed);
     } catch (err) {

@@ -54,6 +54,9 @@ assert.ok(/Amanda Souza \(.*atende: individual\)/.test(resumo), 'tags da Amanda 
 
 // reservas: futura aparece; passada e cancelada não; nome de paciente nunca vaza
 assert.ok(resumo.includes('18/07/2026 18:00'), 'mostra reserva futura confirmada');
+// dia da semana explícito na reserva (18/07/2026 é sábado): sem ele o modelo
+// erra a conta "dd/mm -> dia" e chega a oferecer slot já reservado
+assert.ok(resumo.includes('sábado 18/07/2026 18:00'), 'reserva vem com dia da semana');
 assert.ok(!resumo.includes('10/07/2026'), 'reserva PASSADA não aparece');
 assert.ok(!resumo.includes('20/07/2026'), 'reserva CANCELADA não aparece');
 assert.ok(!resumo.includes('Mariana Silva'), 'não vaza nome de paciente');

@@ -153,7 +153,13 @@ export function resumoDisponibilidade(data: AgendaData, opts: ResumoOpts = {}): 
       return d === null || d >= hojeZero;
     })
     .slice(0, 12)
-    .map((a) => `${limpa(a.data)} ${limpa(a.hora)} ${limpa(a.psicologa)}${a.modalidade ? ` (${limpa(a.modalidade)})` : ''}`);
+    .map((a) => {
+      // Dia da semana explícito: sem ele o modelo tem que calcular "20/07 =
+      // segunda" de cabeça e já ofereceu slot reservado por errar essa conta.
+      const d = parseDataBR(a.data);
+      const dia = d ? `${DIAS_SEMANA[d.getDay()]} ` : '';
+      return `${dia}${limpa(a.data)} ${limpa(a.hora)} ${limpa(a.psicologa)}${a.modalidade ? ` (${limpa(a.modalidade)})` : ''}`;
+    });
 
   return [
     '[AGENDA DA CLÍNICA — esta é a agenda OFICIAL da clínica (planilha atualizada). Você TEM autoridade para propor horário diretamente daqui: escolha uma psicóloga cuja tag bate com a modalidade do paciente (individual/casal/infanto) e OFEREÇA na hora um dia+horário dentro da janela dela — NÃO diga que vai "verificar com a equipe" quando este bloco está presente. LIMITES INVIOLÁVEIS: as janelas listadas abaixo são os ÚNICOS dias/horários que existem; não ofereça o que está em "Já reservado"; se o paciente pedir um dia ou horário que NÃO está em nenhuma janela (ex.: pediu sábado e nenhuma psicóloga tem sábado), NUNCA invente — diga com transparência o que está disponível de verdade e ofereça a opção mais próxima, ou se ele insistir diga que vai perguntar à equipe sobre exceções. Ao propor, cite o DIA DA SEMANA + horário ("quinta às 18h") — só cite data numérica (dd/mm) se tiver CERTEZA do cálculo a partir da linha "Hoje é..."; data errada quebra a confiança. Quando o paciente aceitar um horário válido, siga direto para a confirmação com comprovante.]',
