@@ -170,6 +170,41 @@ independentes (código e segurança/LGPD). Principais entregas:
   equipe humana entra só pra conferir o pagamento e assumir após o handoff.
 - Mensagem de status pra Bruna pronta em `mensagem-bruna.md` (formatação WhatsApp).
 
+## Leva 5 — Anti-repetição + brechas de simulação (20/07/2026, v13, commit 2213e4e)
+
+Bug REAL reportado pela Bruna (print de 19/07, teste de uma amiga): a Camila repetiu a mesma
+mensagem duas vezes, idêntica, quando a paciente disse "seria melhor vocês sugerirem". Duas
+falhas: repetição literal (regra de prompt é probabilística) e a causa-raiz — quando o paciente
+DEVOLVE a decisão, a Camila não tinha instrução de decidir e colapsava na repetição.
+
+- **Trava determinística (`src/lib/anti-repeat.ts`)**: `runTriagemSemRepeticao()` (wrapper do
+  `runTriagem`, usado pelo `computeReply` E por todos os harnesses) compara a resposta com a
+  última mensagem da assistente (normalização + Dice ≥ 0.9); se repetiu, refaz UMA vez com
+  aviso explícito no system; se persistir, loga `[anti-repeat] persistiu` e envia (sem loop).
+  Monitorar esse log em produção — warn simples = trava agindo, ok.
+- **Prompt v13** (`2026-07-20-cazule-v13-decide-e-nao-repete`): paciente pede sugestão ou
+  devolve a decisão → Camila SUGERE UMA abordagem na hora (ex.: TCC pra conflitos de casal)
+  e engata a próxima etapa; oferta de escolha no máximo 1x por conversa; reforço na regra
+  de TOM (percebeu que ia repetir = mude a tática e avance o funil).
+- **Brechas achadas em simulação (e corrigidas)**:
+  1. **JSON cru vazava pro paciente**: modelo às vezes emite o JSON com quebras de linha
+     LITERAIS (inválido); o fallback antigo mandava o texto cru como fala. Agora
+     `parseSaidaModelo()` (triagem.ts) recupera (escapa/achata as quebras — salva resposta E
+     ficha) e, se irrecuperável e parece JSON, suprime (vira a mensagem amigável do caller).
+  2. **Slot reservado sendo oferecido**: o bloco "Já reservado" só tinha data numérica e o
+     modelo errava a conta dd/mm→dia da semana. `resumoDisponibilidade` agora prefixa o dia
+     da semana em cada reserva ("segunda-feira 20/07/2026 18:00").
+- **Fixture do cenário luto corrigido**: pedia "segundas de manhã" mas a agenda fake não tem
+  manhã de segunda — a Camila (corretamente, REGRA DE JANELA) negava e o `pronto` não fechava.
+  Agora pede "segundas à tarde" (janela real). Lição: fixtures de disponibilidade precisam
+  bater com as janelas da agenda fake.
+- **Validação**: `test-triagem` 12/12 (cenário novo do bug passou 3/3 execuções);
+  `test-anti-repeat` + `test-parse-modelo` (novos, puros); persona INDECISA nova no
+  `sim-conversa` (devolve toda decisão — Camila decidiu tudo, funil fechou até o Pix, e
+  desviou do slot reservado propondo 19h); replay das 6 conversas reais do Postgres — no
+  turno exato do bug a Camila agora sugere TCC direto, e a trava agiu ao vivo na conversa
+  do paciente que repetia a mesma frase.
+
 ## Armadilhas conhecidas (leia antes de deployar)
 
 ### 1. O prompt do WhatsApp pode não vir do código
