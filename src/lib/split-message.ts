@@ -5,13 +5,13 @@
  * vez) sem depender só da disciplina do modelo. Função pura — fácil de testar.
  */
 export interface SplitOpts {
-  /** tamanho máximo de cada bolha (chars). WhatsApp aguenta 4096; 550 é confortável. */
+  /** tamanho máximo de cada bolha (chars). WhatsApp aguenta 4096; 350 mantém as bolhas curtas (backstop; o ideal é o modelo quebrar com linha em branco). */
   maxLen?: number;
   /** máximo de bolhas por turno. O excedente é juntado na última. */
   maxParts?: number;
 }
 
-const DEFAULT_MAX_LEN = 550;
+const DEFAULT_MAX_LEN = 350;
 const DEFAULT_MAX_PARTS = 3;
 
 /** Quebra um parágrafo grande em pedaços <= maxLen, preferindo fim de frase. */
