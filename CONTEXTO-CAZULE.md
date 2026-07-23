@@ -234,6 +234,15 @@ qualquer disparou o handoff. Três entregas:
 - **Diagnóstico com comprovante real**: `npx tsx --env-file=.env.local scripts/test-comprovante-live.ts <imagem-ou-pdf>`
   mostra a análise + o marcador exato que a Camila veria.
 
+## Leva 7 — Primeiro nome, informação inicial completa e formulário de triagem visível (23/07/2026, v15, commit 4fd2a78)
+
+Três ajustes pedidos pela Bruna a partir de prints reais de teste (sem mudança de código de fluxo — quase tudo é redação do prompt):
+
+- **Primeiro nome, sem cobrar o completo (prompt v15)**: reverte a regra da Leva 6. No print o paciente estranhou "Qual seu nome completo, por gentileza?" ("Pra que o nome completo"). Agora a Camila pede só o primeiro nome ("como posso te chamar?"), aceita abreviado ("Murilo M") e nunca insiste — o nome oficial vem do formulário de triagem. Mudou o exemplo da regra "UMA coisa de cada vez", a etapa (3) do PIPELINE, o exemplo de emenda do funil e a guia de extração do `triagem.ts` ("primeiro nome basta").
+- **Informação inicial completa, estilo da referência (pedido 2)**: a Bruna mostrou o estilo de outra clínica (modalidade + valores + pagamento numa fala fluida). Novo bloco "COMO APRESENTAR A INFORMAÇÃO INICIAL" + regra de abertura de preço + dúvida "Quanto custa" reescritas: a Camila junta MODALIDADE (online, chamada de vídeo, 45 min) + VALORES + PAGAMENTO. Decisão do Murilo: **só Pix** na mensagem (o comprovante Pix é o que confirma; cartão fica com a equipe — as fichas de valores passaram a dizer "cartão só com a equipe" pra não prometer um caminho sem gateway).
+- **Formulário de triagem visível na conversa (pedido 3)**: o form JÁ era enviado automaticamente após o comprovante (`enviarForm` → `{FORM_URL}`), mas nos prints a Camila só dizia "a psicóloga entrará em contato", sem mencionar o formulário. Agora: nova dúvida clássica "Quais os próximos passos / como funciona a triagem?" (explica que o formulário é enviado após o comprovante) + a mensagem de confirmação do Passo 4 reescrita pra anunciar o formulário.
+- **Validação**: `test-triagem` 16/17 (3 cenários novos/alterados verdes — nome abreviado sem cobrar completo, info inicial com modalidade+valores+Pix, próximos passos mencionando o formulário; fluxo feliz do comprovante intacto com a confirmação nova; valor/chave errados continuam bloqueando o handoff). A única falha é o flake conhecido do `pronto=false` no cenário luto/Lucas (todos os campos capturados; não afeta o handoff, que é via `enviarForm`). Units puros ✔, `pnpm build` ✔, `sim-conversa passivo` ✔. **`app_config` vazio confirmado** (o DEFAULT_PROMPT v15 do código vale em produção).
+
 ## Armadilhas conhecidas (leia antes de deployar)
 
 ### 1. O prompt do WhatsApp pode não vir do código
