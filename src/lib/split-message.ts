@@ -13,6 +13,15 @@ export interface SplitOpts {
 
 const DEFAULT_MAX_LEN = 350;
 const DEFAULT_MAX_PARTS = 3;
+// Se o modelo mandou tudo num parágrafo só (sem linha em branco) e ficou uma
+// bolha longa com várias frases, o código reparte em ~2 bolhas por frase — assim
+// a UX de "2-3 balões" não depende do modelo lembrar de pular linha.
+const AUTO_SPLIT_MIN = 180;
+
+/** conta frases aproximadas (mesma heurística de splitBySentence). */
+function contarFrases(s: string): number {
+  return (s.match(/[^.!?…]+[.!?…]+|\S[^.!?…]*$/g) ?? []).filter((f) => f.trim()).length;
+}
 
 /** Quebra um parágrafo grande em pedaços <= maxLen, preferindo fim de frase. */
 function splitBySentence(paragraph: string, maxLen: number): string[] {
@@ -72,6 +81,16 @@ export function splitReply(text: string, opts: SplitOpts = {}): string[] {
   // Fallback (só se os parágrafos ficaram todos vazios): garante o invariante de
   // maxLen quebrando por frase em vez de devolver o texto cru.
   if (parts.length === 0) parts.push(...splitBySentence(clean, maxLen));
+
+  // Auto-split: sobrou UMA bolha longa e multi-frase (o modelo não pulou linha) →
+  // reparte por frase em ~2 bolhas equilibradas, garantindo os balões.
+  if (parts.length === 1 && parts[0].length > AUTO_SPLIT_MIN && contarFrases(parts[0]) >= 3) {
+    const repartido = splitBySentence(parts[0], Math.ceil(parts[0].length / 2));
+    if (repartido.length >= 2) {
+      parts.length = 0;
+      parts.push(...repartido);
+    }
+  }
 
   if (parts.length > maxParts) {
     const head = parts.slice(0, maxParts - 1);

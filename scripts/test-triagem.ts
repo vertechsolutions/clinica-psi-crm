@@ -347,12 +347,13 @@ const cenarios: Cenario[] = [
   },
   {
     nome: 'info inicial -> quebra em bolhas e ja puxa o proximo passo',
-    falas: ['oi, quero uma sessao individual'],
+    falas: ['oi, quanto custa a sessão individual?'],
     checar: (t) => {
       const resp = ultimo(t).resposta;
       const bolhas = splitReply(resp).length;
-      const puxou = /chamar|seu nome|te trouxe|motivou|individual ou.*casal|\?/i.test(resp);
-      return { ok: bolhas >= 2 && puxou, nota: `bolhas=${bolhas} puxouProximo=${puxou} | "${resp.slice(0, 160)}"` };
+      const temValor = /75|280/.test(resp);
+      const puxou = /chamar|seu nome|te trouxe|motivou|individual ou.*casal|agendar|\?/i.test(resp);
+      return { ok: bolhas >= 2 && temValor && puxou, nota: `bolhas=${bolhas} temValor=${temValor} puxou=${puxou} | "${resp.slice(0, 160)}"` };
     },
   },
   {

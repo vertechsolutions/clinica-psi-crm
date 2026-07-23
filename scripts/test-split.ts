@@ -59,4 +59,17 @@ const bolhas = splitReply(corridoLongo);
 assert.ok(bolhas.length >= 2, 'bloco corrido > 350 deve virar 2+ bolhas com o default novo');
 assert.ok(bolhas.every((b) => b.length <= 350), 'toda bolha respeita o teto default de 350');
 
-console.log(`OK test-split — 10 asserts (backstop 350)`);
+// 10) parágrafo único multi-frase (< maxLen, sem \n\n) é repartido em 2+ bolhas
+//     pelo auto-split — garante os balões mesmo se o modelo não pular linha
+const infoInicial =
+  'As sessões são online, por chamada de vídeo, com duração de 45 minutos. ' +
+  'A avulsa é R$ 75,00 e o pacote mensal (4 sessões, uma por semana) sai por R$ 280,00. ' +
+  'O pagamento é via Pix. Como posso te chamar?';
+assert.ok(infoInicial.length > 180 && infoInicial.length < 350, 'sanity: entre 180 e 350 (não cai no backstop)');
+const infoBolhas = splitReply(infoInicial);
+assert.ok(infoBolhas.length >= 2, 'parágrafo único multi-frase deve virar 2+ bolhas (auto-split)');
+
+// 11) resposta curta (poucas frases) NÃO é picotada pelo auto-split
+assert.deepStrictEqual(splitReply('Oi, Murilo! Que bom que você veio 😊'), ['Oi, Murilo! Que bom que você veio 😊']);
+
+console.log(`OK test-split — 12 asserts (backstop 350 + auto-split)`);
