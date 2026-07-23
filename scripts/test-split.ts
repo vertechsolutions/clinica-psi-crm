@@ -46,4 +46,17 @@ assert.deepStrictEqual(
   ['O formulário: https://docs.google.com/forms/d/abc/viewform'],
 );
 
-console.log(`OK test-split — 9 asserts`);
+// 9) com o default novo (350), um bloco corrido longo (> 350 chars, sem \n\n)
+//    quebra em 2+ bolhas por frase
+const corridoLongo =
+  'As sessões são online, por chamada de vídeo, com duração de 45 minutos. ' +
+  'A avulsa é R$ 75,00 e o pacote mensal de 4 sessões sai por R$ 280,00, com desconto. ' +
+  'Também temos a opção quinzenal, com 2 sessões por mês, por R$ 150,00. ' +
+  'O pagamento é via Pix, e assim que você me enviar o comprovante eu já reservo o seu horário. ' +
+  'Você prefere atendimento individual ou de casal, pra eu te passar os detalhes certinhos?';
+assert.ok(corridoLongo.length > 350, 'sanity: o texto de teste deve passar do teto');
+const bolhas = splitReply(corridoLongo);
+assert.ok(bolhas.length >= 2, 'bloco corrido > 350 deve virar 2+ bolhas com o default novo');
+assert.ok(bolhas.every((b) => b.length <= 350), 'toda bolha respeita o teto default de 350');
+
+console.log(`OK test-split — 10 asserts (backstop 350)`);

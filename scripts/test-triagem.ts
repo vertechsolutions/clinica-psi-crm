@@ -26,6 +26,7 @@ import { runTriagemSemRepeticao, ehRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
 import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/comprovante-core';
+import { splitReply } from '../src/lib/split-message';
 
 // Análise de comprovante VÁLIDA (avulsa individual, chave da clínica) — os
 // cenários derivam variações dela. Usa a MESMA função da produção pra montar
@@ -342,6 +343,26 @@ const cenarios: Cenario[] = [
       const r = ultimo(t).resposta.toLowerCase();
       const mencionaFormulario = /formul[áa]rio/.test(r);
       return { ok: mencionaFormulario, nota: `mencionaFormulario=${mencionaFormulario} | "${ultimo(t).resposta.slice(0, 160)}"` };
+    },
+  },
+  {
+    nome: 'info inicial -> quebra em bolhas e ja puxa o proximo passo',
+    falas: ['oi, quero uma sessao individual'],
+    checar: (t) => {
+      const resp = ultimo(t).resposta;
+      const bolhas = splitReply(resp).length;
+      const puxou = /chamar|seu nome|te trouxe|motivou|individual ou.*casal|\?/i.test(resp);
+      return { ok: bolhas >= 2 && puxou, nota: `bolhas=${bolhas} puxouProximo=${puxou} | "${resp.slice(0, 160)}"` };
+    },
+  },
+  {
+    nome: 'acolhe a dor e CONTINUA no mesmo turno (nao para)',
+    falas: ['oi, quero uma sessao individual', 'meu nome é Murilo', 'ando muito pra baixo, acho que é depressao'],
+    checar: (t) => {
+      const resp = ultimo(t).resposta;
+      const acolheu = /sinto muito|imagino|que bom que|passo importante|difícil|dif[íi]cil/i.test(resp);
+      const puxou = /dia|hor[áa]rio|per[íi]odo|melhor.*(voc[êe]|pra você)|agendar|\?/i.test(resp);
+      return { ok: acolheu && puxou, nota: `acolheu=${acolheu} puxouProximo=${puxou} | "${resp.slice(0, 160)}"` };
     },
   },
 ];
