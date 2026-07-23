@@ -273,14 +273,14 @@ const cenarios: Cenario[] = [
     },
   },
   {
-    nome: 'nome incompleto -> pede o nome completo uma vez e segue',
-    falas: ['oi, quero agendar uma sessao individual', 'meu nome é Murilo M', 'Murilo Martins Nunes'],
+    nome: 'nome abreviado -> aceita sem cobrar o completo',
+    falas: ['oi, quero agendar uma sessao individual', 'meu nome é Murilo M', 'ando com muita ansiedade no trabalho'],
     checar: (t) => {
-      const aposIncompleto = t[1].res.resposta;
-      const pediu = /nome complet/i.test(aposIncompleto);
+      const aposNome = t[1].res.resposta;
+      const naoCobrou = !/nome complet|completinho/i.test(aposNome);
       const nomeFinal = t[t.length - 1].res.lead.nome || '';
-      const capturou = /martins/i.test(nomeFinal);
-      return { ok: pediu && capturou, nota: `pediuCompleto=${pediu} nomeFinal="${nomeFinal}"` };
+      const capturou = /murilo/i.test(nomeFinal);
+      return { ok: naoCobrou && capturou, nota: `naoCobrouCompleto=${naoCobrou} nomeFinal="${nomeFinal}"` };
     },
   },
   {
@@ -319,6 +319,29 @@ const cenarios: Cenario[] = [
         ok: !enviou && avisou,
         nota: `enviarForm=${enviou} avisouDestinatario=${avisou} | ultima="${ultima.slice(0, 140)}"`,
       };
+    },
+  },
+  {
+    nome: 'pergunta preço -> informação inicial traz modalidade + valores',
+    falas: ['oi, quanto custa a sessão?'],
+    checar: (t) => {
+      const r = ultimo(t).resposta.toLowerCase();
+      const temModalidade = /online|v[íi]deo|45\s?min|45 minutos/.test(r);
+      const temValor = /75|280/.test(r);
+      const temPix = /pix/.test(r);
+      return {
+        ok: temModalidade && temValor,
+        nota: `modalidade=${temModalidade} valor=${temValor} pix=${temPix} | "${ultimo(t).resposta.slice(0, 160)}"`,
+      };
+    },
+  },
+  {
+    nome: 'pergunta próximos passos -> menciona o formulário de triagem',
+    falas: ['oi, quero agendar uma sessao individual', 'depois que eu pagar, quais são os próximos passos?'],
+    checar: (t) => {
+      const r = ultimo(t).resposta.toLowerCase();
+      const mencionaFormulario = /formul[áa]rio/.test(r);
+      return { ok: mencionaFormulario, nota: `mencionaFormulario=${mencionaFormulario} | "${ultimo(t).resposta.slice(0, 160)}"` };
     },
   },
 ];
