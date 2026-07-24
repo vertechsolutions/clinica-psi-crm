@@ -253,6 +253,26 @@ Do log real do Murilo (v15): a Camila (1) parava de conduzir depois de dar os va
 - **Formatação**: tópicos/bullets liberados pra LISTAS (valores, etapas, opções); acolhimento e conversa em prosa (não virar formulário).
 - **Validação**: `test-split` 12 asserts (backstop 350 + auto-split); `test-triagem` **19/19** (2 novos: info inicial em 3 balões com valores + puxão; acolhe-a-dor-e-continua no mesmo turno); build ok; `sim-conversa passivo` ok. Prompt `2026-07-23-cazule-v16-proatividade-e-baloes`.
 
+## Leva 9 — Planilha v2 + trava anti-conflito (planejada — aguardando Bruna)
+
+Do teste real e da planilha oficial preenchida pela Bruna (`1kyEe0-2SN9a0QaZt1evQcnG4B-Qx1g8B9dKNhsBN_3k`):
+
+**Problemas:**
+1. **Horários quebrados**: sessões de 45 min geram inícios como 08:45, 11:15, 13:45 — o parser atual espera "janela 14:00-19:00" e não entende isso. A Bruna já criou abas por psicóloga (Talita, Mery Helen, Joseane, Gabriela, Emanuelle) com horários de início por dia, mas com typos (`13;00`, `08:0`) que o `parseGrade` (`src/lib/agenda-core.ts`) nem lê.
+2. **Dupla marcação possível**: a Camila só LÊ a planilha (cache 60s), o "já reservado" é texto, não há tabela de reservas no Postgres, e o fechamento é só `pausada=TRUE` — dois pacientes podem fechar o mesmo horário ao mesmo tempo.
+
+**Decisões (24/07/2026):**
+- Formato da grade: **aba por psicóloga** (formaliza o que a Bruna já fez) ✅
+- Política de conflito e escrita automática na Agenda: aguardando resposta da Bruna (7 perguntas enviadas em `mensagem-bruna-planilha.md`)
+
+**Blueprint técnico (implementar SÓ após respostas da Bruna):**
+1. **Parser novo**: `sheets.ts` lista metadados das abas; toda aba que bate com um nome da aba "Psicólogas" é grade daquela psicóloga. Normalização tolerante: `13;00`→`13:00`, `08:0`→`08:00`.
+2. **Slots concretos**: expandir grade em slots datados no horizonte configurável, subtrair Agenda (status≠Cancelada), recorrências semanais e bloqueios. Prompt recebe slots LIVRES explícitos, não janelas + lista de ocupados.
+3. **Slot estruturado na triagem**: novo campo `horarioEscolhido {data, hora, psicologa} | null` no schema JSON (`triagem.ts`), persiste no `lead` JSONB.
+4. **Trava atômica (Postgres)**: tabela `agendamentos` com `UNIQUE(data, hora, psicologa)`. No turno com `enviarForm=true`, `INSERT … ON CONFLICT DO NOTHING`. Conflito → mensagem determinística ("esse horário acabou de ser preenchido; seu pagamento fica como crédito") + alerta de CONFLITO pra equipe; Gemini reoferece no próximo turno.
+5. **Espelho na planilha** (se Bruna topar): SA vira Editor; após claim OK, `values.append` na aba Agenda. Falha = não bloqueia (alerta já tem os dados).
+6. Testes: normalização/expansão/subtração com dados reais (typos incluídos); claim duplo (segundo INSERT falha); cenários novos no `test-triagem`.
+
 ## Armadilhas conhecidas (leia antes de deployar)
 
 ### 1. O prompt do WhatsApp pode não vir do código
