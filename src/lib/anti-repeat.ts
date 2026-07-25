@@ -3,6 +3,7 @@
 // camada de código garante que a resposta nunca sai igual à anterior.
 
 import { runTriagem, type TriagemInput, type TriagemResult } from './triagem';
+import { terminaSemAvancar } from './conducao';
 
 /** Normaliza pra comparação: minúsculas, sem pontuação, espaços colapsados. */
 export function normalizaComparacao(s: string): string {
@@ -51,20 +52,41 @@ const AVISO_RETRY = `
 - Se o paciente pediu pra reenviar uma informação (ex.: dados do Pix, valores), reenvie os dados, mas com o texto em volta reformulado.
 - Em qualquer caso: frases diferentes das da sua última mensagem, mais curto, avançando a conversa.`;
 
+const AVISO_AVANCAR = `
+
+[AVISO DO SISTEMA — só neste turno]: a resposta que você tentou enviar NÃO puxou o próximo passo (terminou sem uma pergunta que conduza a conversa). Isso é proibido no meio do atendimento. Gere uma resposta NOVA que:
+- responda por INTEIRO o que o paciente trouxe (inclusive a pergunta que ele fez), acolhendo primeiro se for uma dor;
+- e TERMINE puxando a próxima etapa pendente com UMA pergunta leve — nome só se ainda não souber; senão motivação, disponibilidade, ou propor um horário concreto da agenda.
+Nunca encerre no acolhimento nem pare esperando o paciente dizer "ok".`;
+
 /**
- * runTriagem com trava anti-repetição: se a resposta sair igual (ou quase) à
- * última mensagem da assistente no histórico, refaz UMA única vez com o aviso
- * acima no system. Se ainda assim repetir, loga e devolve a segunda tentativa
- * (nunca entra em loop de chamadas).
+ * runTriagem com duas travas determinísticas numa passada só (máx 2 chamadas ao
+ * Gemini): se a resposta (a) sair igual/quase à última mensagem da assistente OU
+ * (b) não puxar o próximo passo do funil (e não for handoff/fechamento), refaz
+ * UMA vez com o(s) aviso(s) certo(s). Loga se persistir. Nunca entra em loop.
  */
-export async function runTriagemSemRepeticao(input: TriagemInput): Promise<TriagemResult> {
+export async function runTriagemGuardada(input: TriagemInput): Promise<TriagemResult> {
   const anterior = [...input.messages].reverse().find((m) => m.role === 'assistant')?.content;
   const primeira = await runTriagem(input);
-  if (!ehRepeticao(primeira.resposta, anterior)) return primeira;
-  console.warn('[anti-repeat] resposta repetiu a anterior — refazendo com aviso');
-  const segunda = await runTriagem({ ...input, system: input.system + AVISO_RETRY });
+
+  const repetiu = ehRepeticao(primeira.resposta, anterior);
+  // só cobra avanço no meio do funil: nunca no handoff (enviarForm)
+  const parou = !primeira.enviarForm && terminaSemAvancar(primeira.resposta);
+  if (!repetiu && !parou) return primeira;
+
+  let aviso = '';
+  if (repetiu) aviso += AVISO_RETRY;
+  if (parou) aviso += AVISO_AVANCAR;
+  console.warn(`[guard] refazendo (repetiu=${repetiu}, parou=${parou})`);
+  const segunda = await runTriagem({ ...input, system: input.system + aviso });
   if (ehRepeticao(segunda.resposta, anterior)) {
-    console.error('[anti-repeat] repetição persistiu após retry — enviando a 2ª tentativa mesmo assim');
+    console.error('[guard] repetição persistiu após retry — enviando a 2ª tentativa mesmo assim');
+  }
+  if (!segunda.enviarForm && terminaSemAvancar(segunda.resposta)) {
+    console.error('[guard] resposta ainda não avança após retry — enviando mesmo assim');
   }
   return segunda;
 }
+
+/** Compat: nome antigo usado pela route, webhook e harness de testes. */
+export const runTriagemSemRepeticao = runTriagemGuardada;
