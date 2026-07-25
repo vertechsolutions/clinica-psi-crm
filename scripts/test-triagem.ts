@@ -381,9 +381,9 @@ const cenarios: Cenario[] = [
     },
   },
   {
-    nome: 'retomada com nome+modalidade -> nao re-pergunta individual/casal nem nome',
+    nome: 'nome conhecido + modalidade dita -> nao re-pergunta nada, informa e conduz',
     system: SYSTEM + '\n\n' + blocoContatoDe('Marina', undefined),
-    falas: ['oi, tudo bem?', 'gostaria de saber os valores da individual'],
+    falas: ['oi, gostaria de saber os valores da sessao individual'],
     checar: (t) => {
       const todas = todasRespostas(t);
       const perguntouModalidade = /individual ou (de )?casal/i.test(todas);
