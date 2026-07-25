@@ -24,6 +24,22 @@ import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { splitReply } from '../src/lib/split-message';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
 import { blocoContatoDe } from '../src/lib/contato';
+import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/comprovante-core';
+
+/**
+ * Comprovante fake (avulsa individual, chave da clínica) — o simulador manda um
+ * placeholder de "enviei uma imagem"; a gente troca pelo marcador REAL que o
+ * webhook injeta (com Análise automática), pra o teste do handoff ser fiel.
+ */
+const COMPROVANTE_FAKE: AnaliseComprovante = {
+  ehComprovante: true,
+  valor: 75,
+  nomeDestinatario: 'Bruna Amorim',
+  chaveDestino: '+55 27 98117-8233',
+  instituicao: 'Nubank',
+  dataHora: '20/07/2026 15:10',
+};
+const MARCADOR_COMPROVANTE = montarMarcadorComprovante(COMPROVANTE_FAKE, 'confere');
 
 /** Espelha o computeReply: substitui {FORM_URL} e {PIX_INFO} pelos valores reais. */
 const SYSTEM = DEFAULT_PROMPT.replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}').replaceAll(
@@ -77,8 +93,8 @@ const PACIENTE_INDIVIDUAL: Persona = {
 Persona: Mariana, 29 anos, ansiosa por causa do trabalho, quer começar terapia INDIVIDUAL.
 Regras: escreva como no WhatsApp, curto, uma mensagem por vez, em PT-BR. NÃO seja robótica.
 Fluxo natural: cumprimente, pergunte o preço, demonstre interesse, aceite agendar, escolha um
-horário que a atendente propuser, diga que vai pagar por Pix e, quando ela pedir o comprovante,
-responda "[o paciente enviou uma imagem/anexo pelo WhatsApp — se o pagamento acabou de ser combinado, é provavelmente o comprovante]".
+horário que a atendente propuser, quando ela perguntar escolha a sessão AVULSA, diga que vai pagar por Pix
+e, quando ela pedir o comprovante, responda "[o paciente enviou uma imagem/anexo pelo WhatsApp — se o pagamento acabou de ser combinado, é provavelmente o comprovante]".
 Responda SOMENTE com a próxima fala da paciente, sem aspas, sem narração.`,
   maxTurnos: 12,
   encerra: (t) => t.some((x) => x.enviarForm),
@@ -187,8 +203,13 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
   if (persona.comNome) system = `${system}\n\n${blocoContatoDe(persona.comNome, undefined)}`;
   let ultimo: Awaited<ReturnType<typeof runTriagemSemRepeticao>> | null = null;
   for (let i = 0; i < persona.maxTurnos; i++) {
-    const fala = await proximaFalaPaciente(ai, persona, transcript);
+    let fala = await proximaFalaPaciente(ai, persona, transcript);
     if (!fala) break;
+    // O simulador manda um placeholder quando "envia o comprovante em imagem";
+    // troca pelo marcador REAL do webhook (com Análise automática) pra fidelidade.
+    if (/enviou (uma imagem|um anexo)|\[imagem\]|\[anexo\]|coloque a imagem|comprovante.*(imagem|anexo|foto)/i.test(fala)) {
+      fala = MARCADOR_COMPROVANTE;
+    }
     history.push({ role: 'user', content: fala });
     const res = await runTriagemSemRepeticao({ system, messages: history });
     ultimo = res;

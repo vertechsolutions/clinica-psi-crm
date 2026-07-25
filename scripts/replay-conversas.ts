@@ -69,7 +69,9 @@ async function main() {
 
   // agenda real (mesma que a produção injeta) + FORM_URL como no computeReply
   const agenda = await agendaContexto();
-  let system = DEFAULT_PROMPT.replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}');
+  let system = DEFAULT_PROMPT
+    .replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}')
+    .replaceAll('{PIX_INFO}', process.env.PIX_INFO || 'Chave Pix (celular): +55 27 98117-8233 — em nome de Bruna (Clínica Cazule)');
   if (agenda) system = `${system}\n\n${agenda}`;
   console.log(`Agenda no contexto: ${agenda ? 'SIM (' + agenda.length + ' chars)' : 'NÃO'}`);
 
