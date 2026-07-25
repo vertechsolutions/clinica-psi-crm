@@ -30,6 +30,7 @@ import { runTriagemSemRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { splitReply } from '../src/lib/split-message';
 import { agendaContexto } from '../src/lib/sheets';
+import { blocoContatoDe } from '../src/lib/contato';
 
 /** Máximo de turnos de usuário re-rodados por conversa (rate limit do free tier). */
 const MAX_TURNOS_POR_CONVERSA = 12;
@@ -60,6 +61,10 @@ async function main() {
   const { rows } = await db.query<Msg>(
     `SELECT wa_id, role, content, created_at FROM wa_messages ORDER BY wa_id, created_at, id`,
   );
+  const nomes = await db.query<{ wa_id: string; nome: string | null }>(
+    `SELECT wa_id, lead->>'nome' AS nome FROM wa_conversations`,
+  );
+  const nomePorConversa = new Map(nomes.rows.map((r) => [r.wa_id, r.nome]));
   await db.end();
 
   // agenda real (mesma que a produção injeta) + FORM_URL como no computeReply
@@ -77,6 +82,8 @@ async function main() {
 
   for (const [waId, msgs] of porConversa) {
     console.log(`\n########## CONVERSA ${mask(waId)} — ${msgs.length} msgs (${msgs[0].created_at.toISOString().slice(0, 10)} a ${msgs[msgs.length - 1].created_at.toISOString().slice(0, 10)}) ##########`);
+    const contato = blocoContatoDe(nomePorConversa.get(waId) ?? null, null);
+    const systemConv = contato ? `${system}\n\n${contato}` : system;
     const history: { role: 'user' | 'assistant'; content: string }[] = [];
     let turnos = 0;
 
@@ -88,7 +95,7 @@ async function main() {
         if (turnos < MAX_TURNOS_POR_CONVERSA) {
           history.push({ role: 'user', content: m.content });
           try {
-            const res = await runTriagemSemRepeticao({ system, messages: history });
+            const res = await runTriagemSemRepeticao({ system: systemConv, messages: history });
             const bolhas = splitReply(res.resposta);
             console.log(`\n[turno ${turnos + 1}] paciente: ${m.content.slice(0, 160)}`);
             console.log(`  ANTIGA: ${antiga.slice(0, 220)}`);

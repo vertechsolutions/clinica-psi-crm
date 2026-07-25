@@ -27,6 +27,7 @@ import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
 import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/comprovante-core';
 import { splitReply } from '../src/lib/split-message';
+import { blocoContatoDe } from '../src/lib/contato';
 
 // Análise de comprovante VÁLIDA (avulsa individual, chave da clínica) — os
 // cenários derivam variações dela. Usa a MESMA função da produção pra montar
@@ -70,6 +71,8 @@ type Turno = { fala: string; res: TriagemResult };
 
 interface Cenario {
   nome: string;
+  /** system alternativo (ex.: com bloco [DADOS DO CONTATO]); default = SYSTEM. */
+  system?: string;
   falas: string[];
   checar: (t: Turno[]) => { ok: boolean; nota: string };
 }
@@ -366,6 +369,51 @@ const cenarios: Cenario[] = [
       return { ok: acolheu && puxou, nota: `acolheu=${acolheu} puxouProximo=${puxou} | "${resp.slice(0, 160)}"` };
     },
   },
+  {
+    nome: 'ja sabe o nome -> NAO re-pergunta (bug 25/07)',
+    system: SYSTEM + '\n\n' + blocoContatoDe('Bruna', undefined),
+    falas: ['Gostaria de terapia', 'Individual', 'existem profissionais com foco em abordagens diferentes?'],
+    checar: (t) => {
+      const todas = todasRespostas(t);
+      const pediuNome = /como.*(te chamar|posso te chamar)|seu (primeiro )?nome|qual.*\bnome\b/i.test(todas);
+      const usouNome = /bruna/i.test(todas);
+      return { ok: !pediuNome && usouNome, nota: `pediuNome=${pediuNome} (esperado false) usouNome=${usouNome} | "${ultimo(t).resposta.slice(0, 140)}"` };
+    },
+  },
+  {
+    nome: 'retomada com nome+modalidade -> nao re-pergunta individual/casal nem nome',
+    system: SYSTEM + '\n\n' + blocoContatoDe('Marina', undefined),
+    falas: ['oi, tudo bem?', 'gostaria de saber os valores da individual'],
+    checar: (t) => {
+      const todas = todasRespostas(t);
+      const perguntouModalidade = /individual ou (de )?casal/i.test(todas);
+      const pediuNome = /como.*(te chamar|posso te chamar)|seu (primeiro )?nome/i.test(todas);
+      const informou = informaValor(todas);
+      return { ok: !perguntouModalidade && !pediuNome && informou, nota: `modalidade=${perguntouModalidade} pediuNome=${pediuNome} informou=${informou} | "${ultimo(t).resposta.slice(0, 140)}"` };
+    },
+  },
+  {
+    nome: 'pergunta com typo (bournat=burnout) -> aborda a pergunta e conduz',
+    falas: ['oi, quero uma sessao individual', 'meu nome é Helena', 'Tenho dificuldade para dormir é possível bournat'],
+    checar: (t) => {
+      const ultima = ultimo(t).resposta;
+      const abordou = /burnout|esgotamento|é possível|d[áa] pra (investigar|cuidar|trabalhar)|pode (ser|estar) (ligad|relacion)|trabalhad[ao]/i.test(ultima);
+      const puxou = /\?/.test(ultima);
+      const naoDiagnosticou = !/voc[êe] (tem|est[áa] com) burnout|é burnout sim/i.test(ultima);
+      return { ok: abordou && puxou && naoDiagnosticou, nota: `abordou=${abordou} puxou=${puxou} semDiagnostico=${naoDiagnosticou} | "${ultima.slice(0, 160)}"` };
+    },
+  },
+  {
+    nome: 'deu disponibilidade -> propoe horario concreto (nao para) [bug 20/07]',
+    falas: ['oi, quero uma sessao individual', 'meu nome é Helena, ando ansiosa', 'quinta à tarde'],
+    checar: (t) => {
+      const ultima = ultimo(t).resposta;
+      // agenda fake: Bruna Ferreira quinta 14:00-19:00 -> deve propor slot concreto
+      const propos = /\b1[4-9]h|1[4-9]:00|reserv/i.test(ultima);
+      const puxou = /\?/.test(ultima) || /reserv/i.test(ultima);
+      return { ok: propos && puxou, nota: `propos=${propos} puxou=${puxou} | "${ultima.slice(0, 160)}"` };
+    },
+  },
 ];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -376,7 +424,7 @@ async function rodarCenario(c: Cenario): Promise<boolean> {
   const turnos: Turno[] = [];
   for (const fala of c.falas) {
     history.push({ role: 'user', content: fala });
-    const res = await runTriagemSemRepeticao({ system: SYSTEM, messages: history });
+    const res = await runTriagemSemRepeticao({ system: c.system ?? SYSTEM, messages: history });
     history.push({ role: 'assistant', content: res.resposta });
     turnos.push({ fala, res });
     console.log(`  [36mpaciente:[0m ${fala}`);

@@ -23,6 +23,7 @@ import { runTriagemSemRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { splitReply } from '../src/lib/split-message';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
+import { blocoContatoDe } from '../src/lib/contato';
 
 /** Espelha o computeReply: substitui {FORM_URL} e {PIX_INFO} pelos valores reais. */
 const SYSTEM = DEFAULT_PROMPT.replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}').replaceAll(
@@ -66,6 +67,8 @@ interface Persona {
   encerra: (t: Turno[]) => boolean;
   /** true = a Camila enxerga o bloco [AGENDA DA CLÍNICA] (fake) neste cenário. */
   comAgenda?: boolean;
+  /** primeiro nome já conhecido (injeta [DADOS DO CONTATO] no system). */
+  comNome?: string;
 }
 
 const PACIENTE_INDIVIDUAL: Persona = {
@@ -144,6 +147,18 @@ Responda SOMENTE com a próxima fala da paciente, sem aspas, sem narração.`,
   encerra: () => false,
 };
 
+const PACIENTE_RECORRENTE: Persona = {
+  nome: 'recorrente-nome-conhecido (nao re-perguntar nome)',
+  comNome: 'Bruna',
+  comAgenda: true,
+  system: `Você simula uma PACIENTE recorrente no WhatsApp de uma clínica de psicologia.
+Persona: Bruna, já conversou antes (a clínica já sabe seu nome). Hoje volta querendo terapia individual.
+Fluxo: "gostaria de terapia" -> "individual" -> pergunte sobre as abordagens -> diga que tem dificuldade pra dormir e pergunte se pode ser burnout -> aceite agendar e escolha um horário proposto.
+Escreva curto, PT-BR, uma mensagem por vez. Responda SOMENTE a próxima fala, sem aspas.`,
+  maxTurnos: 9,
+  encerra: () => false,
+};
+
 async function proximaFalaPaciente(
   ai: GoogleGenAI,
   persona: Persona,
@@ -168,7 +183,8 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
   const history: { role: 'user' | 'assistant'; content: string }[] = [];
   const transcript: Turno[] = [];
 
-  const system = persona.comAgenda ? SYSTEM_COM_AGENDA : SYSTEM;
+  let system = persona.comAgenda ? SYSTEM_COM_AGENDA : SYSTEM;
+  if (persona.comNome) system = `${system}\n\n${blocoContatoDe(persona.comNome, undefined)}`;
   let ultimo: Awaited<ReturnType<typeof runTriagemSemRepeticao>> | null = null;
   for (let i = 0; i < persona.maxTurnos; i++) {
     const fala = await proximaFalaPaciente(ai, persona, transcript);
@@ -199,7 +215,7 @@ async function main() {
     process.exit(1);
   }
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const personas = [PACIENTE_INDIVIDUAL, INSISTENTE_SEM_AGENDA, PACIENTE_CASAL, LEAD_FRIO, PACIENTE_PASSIVO, PACIENTE_INDECISO];
+  const personas = [PACIENTE_INDIVIDUAL, INSISTENTE_SEM_AGENDA, PACIENTE_CASAL, LEAD_FRIO, PACIENTE_PASSIVO, PACIENTE_INDECISO, PACIENTE_RECORRENTE];
   const filtro = process.argv[2]; // opcional: roda só personas cujo nome contém o filtro
   for (const p of personas) {
     if (!filtro || p.nome.includes(filtro)) await rodarPersona(ai, p);
