@@ -190,7 +190,7 @@ export async function POST(req: Request): Promise<Response> {
       await markReadAndType(wamid);
       let turno: Awaited<ReturnType<typeof computeReply>>;
       try {
-        turno = await computeReply(from);
+        turno = await computeReply(from, nome);
       } catch (err) {
         await sendFallback(from, err);
         return;

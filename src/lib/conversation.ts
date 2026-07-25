@@ -3,6 +3,7 @@ import { type LeadExtraido } from './triagem';
 import { runTriagemSemRepeticao } from './anti-repeat';
 import { DEFAULT_PROMPT } from './default-prompt';
 import { agendaContexto } from './sheets';
+import { blocoContatoDe } from './contato';
 
 /** Quantas mensagens recentes reidratam o contexto da IA a cada turno. */
 const HISTORY_LIMIT = 30;
@@ -63,6 +64,20 @@ async function loadHistory(waId: string): Promise<{ role: Role; content: string 
     [waId, HISTORY_LIMIT],
   );
   return rows.reverse(); // volta em ordem cronológica pra montar o prompt
+}
+
+/** Primeiro nome já extraído pra este número (o que a pessoa disse), ou null. */
+async function loadNomeFicha(waId: string): Promise<string | null> {
+  try {
+    const { rows } = await query<{ nome: string | null }>(
+      `SELECT lead->>'nome' AS nome FROM wa_conversations WHERE wa_id = $1`,
+      [waId],
+    );
+    return rows[0]?.nome?.trim() || null;
+  } catch (e) {
+    console.error('[conversation] loadNomeFicha falhou', e);
+    return null;
+  }
 }
 
 export async function upsertConversation(
@@ -143,7 +158,7 @@ function pixInfo(): string {
  * WhatsApp dar certo (via persistReply), pra o histórico nunca ter uma resposta
  * que o paciente não recebeu.
  */
-export async function computeReply(waId: string): Promise<TurnoResposta & { enviarForm: boolean }> {
+export async function computeReply(waId: string, pushName?: string): Promise<TurnoResposta & { enviarForm: boolean }> {
   const history = await loadHistory(waId);
   // Substitui {FORM_URL} no system prompt pelo valor real (ou mantém placeholder
   // se não estiver configurado — nesse caso a IA acaba pedindo pra equipe).
@@ -154,6 +169,10 @@ export async function computeReply(waId: string): Promise<TurnoResposta & { envi
   // placeholder: assim vale mesmo se o prompt ativo vier do app_config (DB).
   const agenda = await agendaContexto();
   if (agenda) system = `${system}\n\n${agenda}`;
+  // Nome já conhecido (ficha > pushName do WhatsApp): injeta no contexto pra a
+  // Camila cumprimentar pelo nome e NUNCA re-perguntar (bug reportado 25/07).
+  const contato = blocoContatoDe(await loadNomeFicha(waId), pushName);
+  if (contato) system = `${system}\n\n${contato}`;
   const result = await runTriagemSemRepeticao({ system, messages: history });
   let resposta = result.resposta?.trim() || 'Desculpa, pode repetir? Não consegui entender.';
   // Cinto e suspensórios: se a IA marcou enviarForm e o link não veio, adiciona.
