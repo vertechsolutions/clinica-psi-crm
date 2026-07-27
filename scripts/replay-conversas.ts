@@ -28,9 +28,10 @@ try {
 import { Client } from 'pg';
 import { runTriagemSemRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
-import { splitReply } from '../src/lib/split-message';
 import { agendaContexto } from '../src/lib/sheets';
 import { blocoContatoDe } from '../src/lib/contato';
+import { bolhasDoTurno } from '../src/lib/fechamento';
+import { blocoOndeParamos, type MensagemHistorico } from '../src/lib/retomada';
 
 /** Máximo de turnos de usuário re-rodados por conversa (rate limit do free tier). */
 const MAX_TURNOS_POR_CONVERSA = 12;
@@ -86,7 +87,9 @@ async function main() {
     console.log(`\n########## CONVERSA ${mask(waId)} — ${msgs.length} msgs (${msgs[0].created_at.toISOString().slice(0, 10)} a ${msgs[msgs.length - 1].created_at.toISOString().slice(0, 10)}) ##########`);
     const contato = blocoContatoDe(nomePorConversa.get(waId) ?? null, null);
     const systemConv = contato ? `${system}\n\n${contato}` : system;
-    const history: { role: 'user' | 'assistant'; content: string }[] = [];
+    // `at` vem do created_at real do log: é o que faz o bloco de retomada medir o
+    // intervalo de verdade (o caso que a Bruna perguntou, 27/07).
+    const history: MensagemHistorico[] = [];
     let turnos = 0;
 
     for (let i = 0; i < msgs.length; i++) {
@@ -95,18 +98,26 @@ async function main() {
         // resposta antiga = próxima assistant no log (se houver)
         const antiga = msgs[i + 1]?.role === 'assistant' ? msgs[i + 1].content : '(sem resposta no log)';
         if (turnos < MAX_TURNOS_POR_CONVERSA) {
-          history.push({ role: 'user', content: m.content });
+          history.push({ role: 'user', content: m.content, at: m.created_at });
           try {
-            const res = await runTriagemSemRepeticao({ system: systemConv, messages: history });
-            const bolhas = splitReply(res.resposta);
+            const ondeParamos = blocoOndeParamos(history, { temNome: Boolean(nomePorConversa.get(waId)) });
+            const res = await runTriagemSemRepeticao({
+              system: ondeParamos ? `${systemConv}\n\n${ondeParamos}` : systemConv,
+              messages: history.map(({ role, content }) => ({ role, content })),
+            });
+            const bolhas = bolhasDoTurno(res, process.env.FORM_URL ?? '');
             console.log(`\n[turno ${turnos + 1}] paciente: ${m.content.slice(0, 160)}`);
             console.log(`  ANTIGA: ${antiga.slice(0, 220)}`);
             bolhas.forEach((b, k) => console.log(`  NOVA#${k + 1}: ${b.slice(0, 220)}`));
             if (res.enviarForm) console.log('  >> NOVA marcou enviarForm=true');
             // repõe a resposta ANTIGA no histórico (preserva o fluxo original)
             history.pop();
-            history.push({ role: 'user', content: m.content });
-            history.push({ role: 'assistant', content: antiga.startsWith('(') ? res.resposta : antiga });
+            history.push({ role: 'user', content: m.content, at: m.created_at });
+            history.push({
+              role: 'assistant',
+              content: antiga.startsWith('(') ? res.resposta : antiga,
+              at: msgs[i + 1]?.created_at ?? m.created_at,
+            });
             turnos++;
             await sleep(1300);
           } catch (e) {

@@ -21,10 +21,11 @@ try {
 import { GoogleGenAI } from '@google/genai';
 import { runTriagemSemRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
-import { splitReply } from '../src/lib/split-message';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
 import { blocoContatoDe } from '../src/lib/contato';
 import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/comprovante-core';
+import { bolhasDoTurno } from '../src/lib/fechamento';
+import { blocoOndeParamos, type MensagemHistorico } from '../src/lib/retomada';
 
 /**
  * Comprovante fake (avulsa individual, chave da clínica) — o simulador manda um
@@ -196,7 +197,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]> {
   console.log(`\n\x1b[1m=== SIM: ${persona.nome} ===\x1b[0m`);
-  const history: { role: 'user' | 'assistant'; content: string }[] = [];
+  const history: MensagemHistorico[] = [];
   const transcript: Turno[] = [];
 
   let system = persona.comAgenda ? SYSTEM_COM_AGENDA : SYSTEM;
@@ -211,11 +212,17 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
       fala = MARCADOR_COMPROVANTE;
     }
     history.push({ role: 'user', content: fala });
-    const res = await runTriagemSemRepeticao({ system, messages: history });
+    const ondeParamos = blocoOndeParamos(history, { temNome: Boolean(persona.comNome) });
+    const res = await runTriagemSemRepeticao({
+      system: ondeParamos ? `${system}\n\n${ondeParamos}` : system,
+      messages: history.map(({ role, content }) => ({ role, content })),
+    });
     ultimo = res;
-    history.push({ role: 'assistant', content: res.resposta });
-    const bolhas = splitReply(res.resposta);
-    transcript.push({ paciente: fala, camila: res.resposta, enviarForm: res.enviarForm });
+    // MESMA função da produção: no handoff quem escreve é o código.
+    const bolhas = bolhasDoTurno(res, process.env.FORM_URL ?? '');
+    const enviado = bolhas.join('\n\n');
+    history.push({ role: 'assistant', content: enviado });
+    transcript.push({ paciente: fala, camila: enviado, enviarForm: res.enviarForm });
 
     console.log(`\x1b[36mpaciente:\x1b[0m ${fala}`);
     bolhas.forEach((b, k) => console.log(`\x1b[35mcamila#${k + 1}:\x1b[0m ${b}`));
