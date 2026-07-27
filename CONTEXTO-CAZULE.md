@@ -288,6 +288,66 @@ Correções (travas determinísticas no código — nos moldes do `anti-repeat` 
 
 ⚠️ **ACHADO URGENTE (pré-existente, escopo Leva 9): a agenda está QUEBRADA em produção.** `agendaContexto()` dá **Sheets API 400** (o `batchGet` pede as abas fixas `Psicólogas/Grade Semanal/Agenda`, mas a Bruna reestruturou a planilha em abas por psicóloga — Leva 9). Efeito: a Camila roda **sem o bloco [AGENDA DA CLÍNICA]** → cai na REGRA DURA ("vou verificar com a equipe", que é o fallback seguro), mas às vezes ainda crava horário/psicóloga (fraqueza probabilística da REGRA DURA). Não é regressão do v17 (o v16 tem o mesmo) — mas **prioriza a Leva 9** (parser tolerante + slots + trava anti-conflito). O v17 funciona igual com ou sem agenda: a condução vira "vou verificar com a equipe — qual dia?" (ainda avança), e o fix do nome independe da agenda (provado no replay, que rodou sem agenda).
 
+## Leva 11 — Fechamento oficial da clínica + retomada sem repetir (27/07/2026, v18)
+
+Feedback da Bruna em 27/07 (2 áudios + 4 prints no WhatsApp):
+
+1. **"o final não enviar um texto muito longo, meio que quebrado"** (áudio `PTT-20260727-WA0005`): o
+   encerramento saía num balão gigante porque o texto vinha da redação do modelo — `default-prompt.ts`
+   mandava "confirme com essa mensagem exata" com uma frase de ~380 chars, e o `splitReply` (teto 350)
+   cortava onde cabia, não onde fazia sentido.
+2. **"eu falei 'bom dia, gostaria de terapia' e ela me passou tudo de novo"** (áudio `PTT-20260727-WA0004`):
+   ela quis garantia de que paciente real não recebe tudo outra vez.
+3. Os **textos oficiais** que ela quer, na ordem marcada nos prints: formulário+link → "Confirmação
+   realizada, após o preenchimento da triagem a psicóloga vai entrar em contato com você pelo WhatsApp."
+   → "Caso tenha qualquer dúvida pode me chamar que eu te ajudo." → "Caso você não se identifique com a
+   profissional, podemos fazer o remanejamento para outra psicóloga, é só nos avisar."
+
+**O que mudou:**
+
+- **`src/lib/fechamento.ts`** (novo): os 4 textos + `mensagensDeFechamento(formUrl)` + `bolhasDoTurno()`.
+  O texto é da clínica, então mora no código, não no prompt.
+- **A decisão das bolhas mora no WEBHOOK, depois dos backstops** — não no `computeReply`. Esta é a parte
+  não-óbvia: o backstop de comprovante inválido (`route.ts`) roda *depois* do `computeReply`; se as bolhas
+  fossem montadas lá dentro, o fechamento oficial sairia mesmo com `enviarForm` zerado (e, como `resposta`
+  já seria o texto oficial, nem o fallback salvaria). Achado da revisão adversarial do plano.
+- **Aviso determinístico de anexo inválido** (`mensagemAnexoInvalido` em `comprovante-core.ts`): quando o
+  backstop suprime o handoff, a resposta do modelo também é trocada — senão o paciente recebia o rascunho
+  que o próprio v18 mandou descartar, justo quando precisa saber que o Pix foi pra chave errada.
+- **`src/lib/retomada.ts`** (novo): dois blocos — `[ONDE PARAMOS]` (gap ≥ 6h: "não reabra com boas-vindas,
+  cumprimente e siga") e `[JÁ TRATADO NESTA CONVERSA]` (mesma conversa: só a lista factual, porque mandar
+  cumprimentar a cada turno brigaria com a regra de variação de abertura). Sinais por regex sobre o
+  histórico; `loadHistory` passou a trazer `created_at`.
+- **Prompt v18** (`2026-07-27-cazule-v18-fechamento-oficial-e-retomada`): Passo 4 perdeu os textos (só
+  marca `enviarForm`), regra de retomada aponta pros blocos — mas **o histórico vence o bloco**, que é
+  resumo derivado, não fonte da verdade.
+- **Chave Pix definitiva**: CNPJ `53480459000104` na `PIX_INFO` + `PIX_CHAVE`, e as fixtures de
+  `test-triagem`/`sim-conversa`/`test-comprovante-core` trocadas junto (senão o system diz uma chave e o
+  marcador de comprovante diz outra, e o funil trava).
+
+**Armadilhas que a revisão adversarial pegou (todas corrigidas — leia antes de mexer aqui):**
+
+- O marcador de comprovante **RECUSADO repete o mesmo cabeçalho** do aceito (`comprovante-core.ts`), então
+  regex ingênua fazia o bloco mandar "confirmar o pagamento" em cima de um comprovante rejeitado. Hoje
+  `classificarUltimoAnexo()` classifica **só o último** marcador (varrendo de trás pra frente) e separa
+  "não é comprovante" de "chave não confere" — antes os sinais eram pegajosos: Pix refeito certo continuava
+  recusado, e uma foto qualquer virava cobrança de pagamento nunca combinado.
+- O gap da retomada é medido **desde a última fala da Camila**, não desde a mensagem anterior: quem volta
+  depois de 3 dias manda "bom dia" e, 10s depois, "gostaria de agendar" — medindo as duas últimas, o
+  segundo turno perdia o `[ONDE PARAMOS]`.
+- `"não é casal"` não era detectado como negação: `\b` depois de "é" nunca forma fronteira (é não é `\w`),
+  então a ficha marcava **casal**. Corrigido pra `\s`.
+- Fidelidade dos harnesses: `sim`/`replay`/`test-triagem` passaram a chamar `bolhasDoTurno` (a mesma função
+  da produção) e a carimbar `at` nas mensagens — sem o carimbo, o cenário "retomada no dia seguinte"
+  exercitava o bloco errado. E `test-triagem` passa `temNome` como o `computeReply` faz (sem isso o bloco
+  mandava perguntar o nome nos cenários de nome conhecido — o bug de 25/07 pela porta dos fundos).
+
+**Validação**: 10/10 testes puros (novos `test-fechamento`, `test-retomada`), `tsc` limpo, `npm run build`
+ok, **`test-triagem` 25/25** (os 2 cenários novos de retomada e os 2 de comprovante inválido entre eles).
+Plano: `docs/superpowers/plans/2026-07-27-camila-fechamento-e-retomada.md`. Spec:
+`docs/superpowers/specs/2026-07-27-camila-fechamento-e-retomada-design.md`. Mensagem pra Bruna:
+`mensagem-bruna-v18.md`.
+
 ## Armadilhas conhecidas (leia antes de deployar)
 
 ### 1. O prompt do WhatsApp pode não vir do código
