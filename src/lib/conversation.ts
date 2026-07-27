@@ -4,6 +4,7 @@ import { runTriagemSemRepeticao } from './anti-repeat';
 import { DEFAULT_PROMPT } from './default-prompt';
 import { agendaContexto } from './sheets';
 import { blocoContatoDe } from './contato';
+import { blocoOndeParamos, type MensagemHistorico } from './retomada';
 
 /** Quantas mensagens recentes reidratam o contexto da IA a cada turno. */
 const HISTORY_LIMIT = 30;
@@ -57,13 +58,14 @@ export async function recordAssistantMessage(waId: string, content: string): Pro
   );
 }
 
-async function loadHistory(waId: string): Promise<{ role: Role; content: string }[]> {
-  const { rows } = await query<{ role: Role; content: string }>(
-    `SELECT role, content FROM wa_messages
+async function loadHistory(waId: string): Promise<MensagemHistorico[]> {
+  const { rows } = await query<{ role: Role; content: string; created_at: Date }>(
+    `SELECT role, content, created_at FROM wa_messages
       WHERE wa_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2`,
     [waId, HISTORY_LIMIT],
   );
-  return rows.reverse(); // volta em ordem cronológica pra montar o prompt
+  // volta em ordem cronológica pra montar o prompt; `at` alimenta o bloco de retomada
+  return rows.reverse().map((r) => ({ role: r.role, content: r.content, at: r.created_at }));
 }
 
 /** Primeiro nome já extraído pra este número (o que a pessoa disse), ou null. */
@@ -173,15 +175,16 @@ export async function computeReply(waId: string, pushName?: string): Promise<Tur
   // Camila cumprimentar pelo nome e NUNCA re-perguntar (bug reportado 25/07).
   const contato = blocoContatoDe(await loadNomeFicha(waId), pushName);
   if (contato) system = `${system}\n\n${contato}`;
-  const result = await runTriagemSemRepeticao({ system, messages: history });
+  // Retomada: diz o que já foi tratado pra Camila não repassar tudo de novo
+  // (pedido da Bruna, 27/07). Vazio em primeiro contato. `temNome` evita que o
+  // bloco pule a etapa 3 do funil quando ainda não sabemos o nome.
+  const ondeParamos = blocoOndeParamos(history, { temNome: Boolean(contato) });
+  if (ondeParamos) system = `${system}\n\n${ondeParamos}`;
+  const result = await runTriagemSemRepeticao({
+    system,
+    messages: history.map(({ role, content }) => ({ role, content })),
+  });
   let resposta = result.resposta?.trim() || 'Desculpa, pode repetir? Não consegui entender.';
-  // Cinto e suspensórios: se a IA marcou enviarForm e o link não veio, adiciona.
-  if (result.enviarForm && !resposta.includes(formUrl()) && process.env.FORM_URL) {
-    resposta = `${resposta}\n\n${formUrl()}`;
-  }
-  if (result.enviarForm && !process.env.FORM_URL) {
-    console.warn('[conversation] enviarForm=true mas FORM_URL não está setada — o paciente vai receber o placeholder.');
-  }
   // Nunca deixa placeholder cru vazar
   resposta = resposta
     .replaceAll(FORM_URL_PLACEHOLDER, formUrl())

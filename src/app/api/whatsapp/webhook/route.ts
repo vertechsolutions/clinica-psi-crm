@@ -15,7 +15,7 @@ import {
   persistReply,
   recordUserMessage,
 } from '@/lib/conversation';
-import { splitReply } from '@/lib/split-message';
+import { bolhasDoTurno } from '@/lib/fechamento';
 import { transcribeAudio } from '@/lib/transcribe';
 import { analisarComprovante } from '@/lib/comprovante';
 import {
@@ -208,9 +208,16 @@ export async function POST(req: Request): Promise<Response> {
       }
       // Entrega em bolhas: se a resposta trouxe parágrafos ou ficou longa, manda
       // 2–3 mensagens seguidas (UX de conversa). Se falhar, lança e não persiste.
-      await sendTextSequence(from, splitReply(turno.resposta));
+      // A decisão do que sai fica AQUI, depois do backstop de comprovante: se ele
+      // zerou enviarForm, nenhuma palavra do fechamento oficial é enviada.
+      const bolhas = bolhasDoTurno(turno, process.env.FORM_URL ?? '');
+      if (turno.enviarForm && !process.env.FORM_URL) {
+        console.warn('[webhook] enviarForm=true sem FORM_URL — o fechamento vai sem o link.');
+      }
+      await sendTextSequence(from, bolhas);
       try {
-        await persistReply(from, nome, turno); // grava só depois de entregar
+        // grava o que o paciente REALMENTE recebeu (no handoff, o texto oficial)
+        await persistReply(from, nome, { ...turno, resposta: bolhas.join('\n\n') });
       } catch (err) {
         console.error('[webhook] erro ao persistir resposta', err);
       }
