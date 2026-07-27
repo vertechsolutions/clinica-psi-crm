@@ -28,6 +28,7 @@ import { resumoDisponibilidade } from '../src/lib/agenda-core';
 import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/comprovante-core';
 import { splitReply } from '../src/lib/split-message';
 import { blocoContatoDe } from '../src/lib/contato';
+import { blocoOndeParamos, type MensagemHistorico } from '../src/lib/retomada';
 
 // Análise de comprovante VÁLIDA (avulsa individual, chave da clínica) — os
 // cenários derivam variações dela. Usa a MESMA função da produção pra montar
@@ -73,6 +74,8 @@ interface Cenario {
   nome: string;
   /** system alternativo (ex.: com bloco [DADOS DO CONTATO]); default = SYSTEM. */
   system?: string;
+  /** histórico pré-existente (retomada): entra antes das falas e alimenta o bloco de retomada. */
+  historico?: { role: 'user' | 'assistant'; content: string; at?: Date }[];
   falas: string[];
   checar: (t: Turno[]) => { ok: boolean; nota: string };
 }
@@ -277,6 +280,53 @@ const cenarios: Cenario[] = [
     },
   },
   {
+    nome: 'retomada no dia seguinte -> NAO repassa valores de novo',
+    falas: ['bom dia, gostaria de agendar'],
+    historico: [
+      { role: 'user' as const, content: 'oi, quero terapia individual', at: new Date('2026-07-16T20:00:00Z') },
+      {
+        role: 'assistant' as const,
+        content:
+          'As sessões são online, por chamada de vídeo, com duração de 45 minutos 😊\n\nA avulsa é R$ 75,00 e o pacote mensal (4 sessões) sai por R$ 280,00. O pagamento é via Pix.\n\nComo posso te chamar?',
+        at: new Date('2026-07-16T20:01:00Z'),
+      },
+      { role: 'user' as const, content: 'sou a Marina', at: new Date('2026-07-16T20:05:00Z') },
+      { role: 'assistant' as const, content: 'Prazer, Marina! O que te trouxe à terapia agora?', at: new Date('2026-07-16T20:05:30Z') },
+    ],
+    checar: (t) => {
+      const ultima = ultimo(t).resposta;
+      const repassouValores = /r\$\s?(75|280)/i.test(ultima);
+      const reabriu = /seja bem-?vind|me chamo camila/i.test(ultima);
+      return {
+        ok: !repassouValores && !reabriu,
+        nota: `repassouValores=${repassouValores} reabriu=${reabriu} | ultima="${ultima.slice(0, 140)}"`,
+      };
+    },
+  },
+  {
+    nome: 'paciente PEDE o valor de novo -> pode repetir',
+    falas: ['qual era o valor mesmo?'],
+    historico: [
+      { role: 'user' as const, content: 'oi, quero terapia individual', at: new Date('2026-07-16T20:00:00Z') },
+      {
+        role: 'assistant' as const,
+        content: 'A avulsa é R$ 75,00 e o pacote mensal (4 sessões) sai por R$ 280,00. O pagamento é via Pix.',
+        at: new Date('2026-07-16T20:01:00Z'),
+      },
+      { role: 'user' as const, content: 'sou a Marina, ando ansiosa no trabalho', at: new Date('2026-07-16T20:03:00Z') },
+      {
+        role: 'assistant' as const,
+        content: 'Imagino o quanto pesa, Marina. Quais dias funcionam melhor pra você?',
+        at: new Date('2026-07-16T20:03:30Z'),
+      },
+    ],
+    checar: (t) => {
+      const ultima = ultimo(t).resposta;
+      const reinformou = /r\$\s?(75|280)|\b(75|280)\b/i.test(ultima);
+      return { ok: reinformou, nota: `reinformouValor=${reinformou} | ultima="${ultima.slice(0, 140)}"` };
+    },
+  },
+  {
     nome: 'nome abreviado -> aceita sem cobrar o completo',
     falas: ['oi, quero agendar uma sessao individual', 'meu nome é Murilo M', 'ando com muita ansiedade no trabalho'],
     checar: (t) => {
@@ -420,11 +470,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function rodarCenario(c: Cenario): Promise<boolean> {
   console.log(`\n[1m=== ${c.nome} ===[0m`);
-  const history: { role: 'user' | 'assistant'; content: string }[] = [];
+  const history: MensagemHistorico[] = [...(c.historico ?? [])];
+  const systemBase = c.system ?? SYSTEM;
   const turnos: Turno[] = [];
   for (const fala of c.falas) {
     history.push({ role: 'user', content: fala });
-    const res = await runTriagemSemRepeticao({ system: c.system ?? SYSTEM, messages: history });
+    // espelha o computeReply: o bloco de retomada é remontado a cada turno
+    const ondeParamos = blocoOndeParamos(history);
+    const res = await runTriagemSemRepeticao({
+      system: ondeParamos ? `${systemBase}\n\n${ondeParamos}` : systemBase,
+      messages: history.map(({ role, content }) => ({ role, content })),
+    });
     history.push({ role: 'assistant', content: res.resposta });
     turnos.push({ fala, res });
     console.log(`  [36mpaciente:[0m ${fala}`);
@@ -441,16 +497,19 @@ async function main() {
     console.error('GEMINI_API_KEY ausente. Rode com: npx tsx --env-file=.env.local scripts/test-triagem.ts');
     process.exit(1);
   }
+  // filtro opcional por substring do nome: npx tsx ... test-triagem.ts retomada
+  const filtro = (process.argv[2] ?? '').toLowerCase();
+  const selecionados = filtro ? cenarios.filter((c) => c.nome.toLowerCase().includes(filtro)) : cenarios;
   let pass = 0;
-  for (const c of cenarios) {
+  for (const c of selecionados) {
     try {
       if (await rodarCenario(c)) pass++;
     } catch (e) {
       console.log(`  [31mERRO[0m ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  console.log(`\n[1mResultado: ${pass}/${cenarios.length} cenarios passaram[0m`);
-  process.exit(pass === cenarios.length ? 0 : 1);
+  console.log(`\n[1mResultado: ${pass}/${selecionados.length} cenarios passaram[0m`);
+  process.exit(pass === selecionados.length ? 0 : 1);
 }
 
 main();
