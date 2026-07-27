@@ -94,7 +94,10 @@ function modalidadeDita(hist: MensagemHistorico[]): 'individual' | 'casal' | nul
     const m = hist[i];
     if (m.role !== 'user') continue;
     const t = m.content;
-    const negaCasal = /n[ãa]o (?:é|e|eh|seria|for)\b[^.!?]{0,15}casal/i.test(t);
+    // \s em vez de \b depois do verbo: "é" não é \w, então "não é de casal" nunca
+    // casava com \b e a negação passava batido (a pessoa dizia "não é casal" e a
+    // ficha marcava casal). A vírgula de "não, é casal" continua bloqueando o match.
+    const negaCasal = /n[ãa]o (?:é|e|eh|seria|for)\s[^.!?]{0,15}casal/i.test(t);
     const temCasal = /\bcasal\b/i.test(t) && !negaCasal;
     const temIndividual = /\bindividual\b/i.test(t);
     if (temCasal && temIndividual && t.includes('?')) continue; // "individual ou casal?"

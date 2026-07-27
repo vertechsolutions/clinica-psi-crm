@@ -42,6 +42,12 @@ assert.ok(/Cumprimente/i.test(b1), 'manda cumprimentar em uma frase');
 
 // modalidade: negacao e ambiguidade
 assert.equal(extrairSinais([h('user', 'quero individual, não é de casal'), h('assistant', 'ok')]).modalidade, 'individual');
+// negacao SEM a palavra "individual": o \b depois de "é" nao formava fronteira
+// (é nao e \w), entao "não é casal" virava modalidade=casal
+assert.equal(extrairSinais([h('user', 'não é casal, é pra mim'), h('assistant', 'ok')]).modalidade, null);
+assert.equal(extrairSinais([h('user', 'não é de casal, é só pra mim'), h('assistant', 'ok')]).modalidade, null);
+// mas "não, é casal" (com virgula) continua sendo casal
+assert.equal(extrairSinais([h('user', 'não, é casal mesmo'), h('assistant', 'ok')]).modalidade, 'casal');
 assert.equal(extrairSinais([h('user', 'é individual ou casal?'), h('assistant', 'ok')]).modalidade, null, 'pergunta nao decide');
 assert.equal(extrairSinais([h('user', 'quero individual'), h('user', 'na verdade é casal')]).modalidade, 'casal', 'vale a ultima');
 
