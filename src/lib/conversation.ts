@@ -4,6 +4,7 @@ import { runTriagemSemRepeticao } from './anti-repeat';
 import { DEFAULT_PROMPT } from './default-prompt';
 import { agendaContexto } from './sheets';
 import { blocoContatoDe } from './contato';
+import { camposPreenchidos, blocoFichaDe } from './ficha';
 import { blocoOndeParamos, type MensagemHistorico } from './retomada';
 
 /** Quantas mensagens recentes reidratam o contexto da IA a cada turno. */
@@ -68,16 +69,23 @@ async function loadHistory(waId: string): Promise<MensagemHistorico[]> {
   return rows.reverse().map((r) => ({ role: r.role, content: r.content, at: r.created_at }));
 }
 
-/** Primeiro nome já extraído pra este número (o que a pessoa disse), ou null. */
-async function loadNomeFicha(waId: string): Promise<string | null> {
+/**
+ * Ficha inteira já acumulada pra este número, ou null. Antes só o nome era lido
+ * (`lead->>'nome'`): telefone, disponibilidade e queixa ficavam salvos e a Camila
+ * dependia do histórico pra lembrar deles — o que falha justamente na conversa
+ * longa, quando o dado sai das últimas 30 mensagens.
+ */
+async function loadFicha(waId: string): Promise<Partial<LeadExtraido> | null> {
   try {
-    const { rows } = await query<{ nome: string | null }>(
-      `SELECT lead->>'nome' AS nome FROM wa_conversations WHERE wa_id = $1`,
+    const { rows } = await query<{ lead: Partial<LeadExtraido> | null }>(
+      `SELECT lead FROM wa_conversations WHERE wa_id = $1`,
       [waId],
     );
-    return rows[0]?.nome?.trim() || null;
+    const lead = rows[0]?.lead;
+    // jsonb já volta parseado pelo pg; array/escalar seria lixo — trata como sem ficha
+    return lead && typeof lead === 'object' && !Array.isArray(lead) ? lead : null;
   } catch (e) {
-    console.error('[conversation] loadNomeFicha falhou', e);
+    console.error('[conversation] loadFicha falhou', e);
     return null;
   }
 }
@@ -88,15 +96,20 @@ export async function upsertConversation(
   lead: LeadExtraido,
   pronto: boolean,
 ): Promise<void> {
+  // MESCLA em vez de substituir. A ficha é reextraída a cada turno lendo só as
+  // últimas 30 mensagens: numa conversa longa (tem uma com 180 no banco) o dado
+  // dito no começo volta null e o antigo `lead = EXCLUDED.lead` apagava o que já
+  // estava salvo. Com `camposPreenchidos` + `||` do JSONB, o turno novo só
+  // sobrescreve os campos que ele realmente trouxe.
   await query(
     `INSERT INTO wa_conversations (wa_id, nome, lead, pronto, updated_at)
      VALUES ($1, $2, $3, $4, now())
      ON CONFLICT (wa_id) DO UPDATE
        SET nome = COALESCE(EXCLUDED.nome, wa_conversations.nome),
-           lead = EXCLUDED.lead,
+           lead = COALESCE(wa_conversations.lead, '{}'::jsonb) || EXCLUDED.lead,
            pronto = wa_conversations.pronto OR EXCLUDED.pronto,
            updated_at = now()`,
-    [waId, nome ?? null, JSON.stringify(lead), pronto],
+    [waId, nome ?? null, JSON.stringify(camposPreenchidos(lead)), pronto],
   );
 }
 
@@ -173,8 +186,14 @@ export async function computeReply(waId: string, pushName?: string): Promise<Tur
   if (agenda) system = `${system}\n\n${agenda}`;
   // Nome já conhecido (ficha > pushName do WhatsApp): injeta no contexto pra a
   // Camila cumprimentar pelo nome e NUNCA re-perguntar (bug reportado 25/07).
-  const contato = blocoContatoDe(await loadNomeFicha(waId), pushName);
+  const ficha = await loadFicha(waId);
+  const contato = blocoContatoDe(ficha?.nome, pushName);
   if (contato) system = `${system}\n\n${contato}`;
+  // O resto da ficha (telefone, disponibilidade, queixa...) volta pro contexto:
+  // sem isso a Camila só "lembrava" pelo histórico e re-perguntava o que a pessoa
+  // já tinha respondido antes da janela de 30 mensagens.
+  const fichaBloco = blocoFichaDe(ficha);
+  if (fichaBloco) system = `${system}\n\n${fichaBloco}`;
   // Retomada: diz o que já foi tratado pra Camila não repassar tudo de novo
   // (pedido da Bruna, 27/07). Vazio em primeiro contato. `temNome` evita que o
   // bloco pule a etapa 3 do funil quando ainda não sabemos o nome.
