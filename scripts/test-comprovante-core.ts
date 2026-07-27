@@ -5,6 +5,7 @@
 import assert from 'node:assert';
 import {
   verificarDestinatario,
+  mensagemAnexoInvalido,
   montarMarcadorComprovante,
   type AnaliseComprovante,
 } from '../src/lib/comprovante-core';
@@ -64,5 +65,29 @@ assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '5348045900010
 assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '53.480.459/0001-04' }, PIX_CNPJ), 'confere');
 assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '53480459000104' }, '53480459000104'), 'confere');
 assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '12.345.678/0001-99' }, PIX_CNPJ), 'nao_confere');
+
+// Mensagem determinística do backstop: quando o webhook zera o enviarForm por
+// anexo inválido, o rascunho do modelo é descartado (prompt v18) — quem fala com
+// o paciente é este texto.
+const PIX = 'Chave Pix (CNPJ): 53480459000104 — em nome de Cazule Psicologia';
+
+const mChaveErrada = mensagemAnexoInvalido('nao_confere', PIX);
+assert.ok(/outro destinat[áa]rio/i.test(mChaveErrada), 'avisa que o Pix foi pra outro destinatário');
+assert.ok(mChaveErrada.includes('53480459000104'), 'repete a chave correta da clínica');
+
+const mNaoComprovante = mensagemAnexoInvalido('nao_comprovante', PIX);
+assert.ok(/comprovante/i.test(mNaoComprovante), 'pede o comprovante do Pix');
+
+for (const m of [mChaveErrada, mNaoComprovante]) {
+  // Sem comprovante válido não existe fechamento: nada de formulário nem link.
+  assert.ok(!/formul[áa]rio/i.test(m), 'não menciona formulário');
+  assert.ok(!/link/i.test(m), 'não menciona link');
+  // Guard de condução: todo turno tem que avançar a conversa.
+  assert.ok(m.trim().endsWith('?'), 'termina em pergunta');
+}
+
+// Sem PIX_INFO configurada não inventa chave nem vaza placeholder, mas ainda conduz.
+const mSemPix = mensagemAnexoInvalido('nao_confere', '');
+assert.ok(!/\{|\}/.test(mSemPix) && mSemPix.trim().endsWith('?'), 'sem PIX_INFO ainda conduz e não vaza placeholder');
 
 console.log('test-comprovante-core: todos os asserts passaram ✔');

@@ -76,6 +76,13 @@ interface Cenario {
   system?: string;
   /** histórico pré-existente (retomada): entra antes das falas e alimenta o bloco de retomada. */
   historico?: { role: 'user' | 'assistant'; content: string; at?: Date }[];
+  /**
+   * O system deste cenário já traz [DADOS DO CONTATO]? Espelha o
+   * `{ temNome: Boolean(contato) }` do computeReply. Sem isso o bloco de retomada
+   * manda "perguntar como pode chamar a pessoa" mesmo com o nome já conhecido —
+   * exatamente o re-perguntar que a Bruna reportou em 25/07.
+   */
+  temNome?: boolean;
   falas: string[];
   checar: (t: Turno[]) => { ok: boolean; nota: string };
 }
@@ -86,6 +93,11 @@ const todasRespostas = (t: Turno[]) => t.map((x) => x.res.resposta).join('\n');
 // informou valor: "R$ 75", "75 reais", "280", "avulsa", "pacote"
 const informaValor = (s: string) => /r\$\s?\d|\b(75|280)\b|avulsa|pacote/i.test(s);
 const citaAbordagem = (s: string) => /tcc|cognitivo|psican|humanist/i.test(s);
+// Detecta o bloco [DADOS DO CONTATO] REALMENTE injetado no system. Tem que ser
+// ancorado na linha: o próprio DEFAULT_PROMPT cita "[DADOS DO CONTATO]" no meio
+// de uma frase ("ou há um bloco [DADOS DO CONTATO] no contexto"), e um simples
+// includes() daria nome conhecido em TODOS os cenários — o oposto do bug.
+const BLOCO_CONTATO_INJETADO = /^\[DADOS DO CONTATO\]$/m;
 
 const cenarios: Cenario[] = [
   {
@@ -422,6 +434,7 @@ const cenarios: Cenario[] = [
   {
     nome: 'ja sabe o nome -> NAO re-pergunta (bug 25/07)',
     system: SYSTEM + '\n\n' + blocoContatoDe('Bruna', undefined),
+    temNome: true,
     falas: ['Gostaria de terapia', 'Individual', 'existem profissionais com foco em abordagens diferentes?'],
     checar: (t) => {
       const todas = todasRespostas(t);
@@ -433,6 +446,7 @@ const cenarios: Cenario[] = [
   {
     nome: 'nome conhecido + modalidade dita -> nao re-pergunta nada, informa e conduz',
     system: SYSTEM + '\n\n' + blocoContatoDe('Marina', undefined),
+    temNome: true,
     falas: ['oi, gostaria de saber os valores da sessao individual'],
     checar: (t) => {
       const todas = todasRespostas(t);
@@ -472,16 +486,31 @@ async function rodarCenario(c: Cenario): Promise<boolean> {
   console.log(`\n[1m=== ${c.nome} ===[0m`);
   const history: MensagemHistorico[] = [...(c.historico ?? [])];
   const systemBase = c.system ?? SYSTEM;
+  // Espelha o computeReply: lá o temNome vem do [DADOS DO CONTATO]. Sem ele, os
+  // cenários de nome conhecido recebiam "Próxima etapa pendente: perguntar como
+  // pode chamar a pessoa" — o próprio bug de 25/07 que eles deveriam reprovar.
+  const temNome = c.temNome ?? BLOCO_CONTATO_INJETADO.test(systemBase);
+  // Em produção o loadHistory traz created_at em TODAS as linhas, e é o gap entre
+  // as duas últimas que escolhe [JÁ TRATADO] x [ONDE PARAMOS]. Sem carimbo o
+  // extrairSinais devolvia horas=null e o cenário de retomada caía sempre no ramo
+  // factual — nunca exercitando a única instrução anti-reabertura do módulo.
+  // O turno começa um dia depois do último item do histórico (as fixtures são de
+  // 16/07) pra o intervalo ser real; sem histórico, agora mesmo já basta.
+  const fimDoHistorico = c.historico?.[c.historico.length - 1]?.at;
+  let relogio = fimDoHistorico ? new Date(fimDoHistorico.getTime() + 24 * 3_600_000) : new Date();
   const turnos: Turno[] = [];
   for (const fala of c.falas) {
-    history.push({ role: 'user', content: fala });
+    history.push({ role: 'user', content: fala, at: relogio });
     // espelha o computeReply: o bloco de retomada é remontado a cada turno
-    const ondeParamos = blocoOndeParamos(history);
+    const ondeParamos = blocoOndeParamos(history, { temNome });
     const res = await runTriagemSemRepeticao({
       system: ondeParamos ? `${systemBase}\n\n${ondeParamos}` : systemBase,
       messages: history.map(({ role, content }) => ({ role, content })),
     });
-    history.push({ role: 'assistant', content: res.resposta });
+    history.push({ role: 'assistant', content: res.resposta, at: relogio });
+    // os turnos seguintes correm minuto a minuto: só a volta do paciente é que
+    // tem gap de retomada, o resto da conversa é contínuo como no WhatsApp real
+    relogio = new Date(relogio.getTime() + 60_000);
     turnos.push({ fala, res });
     console.log(`  [36mpaciente:[0m ${fala}`);
     console.log(`  [35massist:[0m   ${res.resposta}`);

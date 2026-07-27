@@ -16,11 +16,13 @@ export interface SinaisRetomada {
   horarioProposto: boolean;
   pixEnviado: boolean;
   opcaoEscolhida: boolean;
-  /** comprovante ACEITO pela análise automática */
+  /** o ÚLTIMO anexo foi lido como comprovante (chave confere/inconclusiva ou análise indisponível) */
   comprovanteOk: boolean;
-  /** comprovante recusado (chave/valor errado) ou imagem que não é comprovante */
+  /** o ÚLTIMO anexo foi um comprovante RECUSADO (chave do destinatário não confere) */
   comprovanteRecusado: boolean;
-  /** horas entre a última mensagem e a anterior (null quando não dá pra saber) */
+  /** o ÚLTIMO anexo não era comprovante (foto qualquer) — sinal separado, NÃO é recusa de pagamento */
+  anexoNaoComprovante: boolean;
+  /** horas desde a última fala da Camila (null quando não dá pra saber) */
   horasDesdeUltimoContato: number | null;
 }
 
@@ -38,10 +40,50 @@ const PIX = /chave\s+pix|pix\s*\(/i;
 /** escolha DECIDIDA (não "tem pacote?" nem "qual a diferença de avulsa pra pacote?") */
 const OPCAO_DECIDIDA =
   /\b(quero|prefiro|vou (?:de|querer|ficar com)|fico com|escolho|pode ser|melhor)\b[^.!?]{0,30}\b(avulsa|pacote|quinzenal)\b|\b(avulsa|pacote|quinzenal)\b[^.!?]{0,20}\b(mesmo|ent[ãa]o|por favor)\b/i;
-const COMPROVANTE_CABECA = /COMPROVANTE de pagamento detectado/i;
-/** o marcador de recusa REPETE o cabeçalho, então a recusa tem que ser checada antes */
-const COMPROVANTE_RECUSADO =
-  /N[ÃA]O CONFERE|N[ÃA]O confirme o pagamento|N[ÃA]O parece ser um comprovante/i;
+/** os 4 marcadores do comprovante-core começam com isto (é o que identifica um anexo) */
+const MARCADOR_ANEXO = /^\s*\[o paciente enviou uma imagem/i;
+/** marcador de chave errada — REPETE o cabeçalho do comprovante, então é checado antes do "ok" */
+const CHAVE_NAO_CONFERE = /N[ÃA]O CONFERE|N[ÃA]O confirme o pagamento/i;
+/** marcador de foto qualquer: não é recusa de pagamento, é "do que se trata?" */
+const NAO_EH_COMPROVANTE = /N[ÃA]O parece ser um comprovante/i;
+
+type ClasseAnexo = 'comprovante' | 'recusado' | 'nao_comprovante' | null;
+
+/**
+ * Classifica SÓ o ÚLTIMO marcador de anexo do histórico. Varrer o histórico
+ * inteiro deixava os sinais pegajosos em dois casos reais: (a) o paciente
+ * mandava pro Pix errado, refazia certo, e a recusa continuava ligada — a
+ * Camila cobrava um pagamento que já tinha entrado; (b) uma foto qualquer
+ * ("NÃO parece ser um comprovante") ligava a recusa antes de qualquer pagamento
+ * ter sido combinado. Exigir o prefixo do marcador também impede que uma frase
+ * da PRÓPRIA Camila ("o valor do comprovante não confere com o que
+ * combinamos") ligue o sinal de recusa.
+ */
+function classificarUltimoAnexo(hist: MensagemHistorico[]): ClasseAnexo {
+  for (let i = hist.length - 1; i >= 0; i--) {
+    const t = hist[i].content;
+    if (!MARCADOR_ANEXO.test(t)) continue;
+    // o webhook grava `${marcador} Legenda: ${caption}` — classifica só o marcador,
+    // pra legenda do paciente não virar veredito da análise
+    const fim = t.indexOf(']');
+    const marcador = fim >= 0 ? t.slice(0, fim + 1) : t;
+    if (NAO_EH_COMPROVANTE.test(marcador)) return 'nao_comprovante';
+    if (CHAVE_NAO_CONFERE.test(marcador)) return 'recusado';
+    // sobram chave confere/inconclusiva e "análise indisponível" — nos dois o
+    // marcador manda tratar como comprovante e seguir o fluxo normal
+    return 'comprovante';
+  }
+  return null;
+}
+
+/** Quando a Camila falou pela última vez (null se nenhuma mensagem dela tem data). */
+function ultimaFalaDoAssistente(hist: MensagemHistorico[]): Date | null {
+  for (let i = hist.length - 1; i >= 0; i--) {
+    const m = hist[i];
+    if (m.role === 'assistant' && m.at instanceof Date) return m.at;
+  }
+  return null;
+}
 
 const algum = (h: MensagemHistorico[], role: 'user' | 'assistant', re: RegExp) =>
   h.some((m) => m.role === role && re.test(m.content));
@@ -66,12 +108,14 @@ function modalidadeDita(hist: MensagemHistorico[]): 'individual' | 'casal' | nul
 export function extrairSinais(hist: MensagemHistorico[]): SinaisRetomada {
   const n = hist.length;
   const ultima = hist[n - 1]?.at;
-  const anterior = hist[n - 2]?.at;
+  // gap contado desde a última fala da CAMILA, não desde a mensagem anterior: quem
+  // volta depois de 3 dias costuma mandar "bom dia" e, 10 segundos depois, "gostaria
+  // de agendar" — medindo só as duas últimas, o segundo turno dava segundos e perdia
+  // o [ONDE PARAMOS] (justamente o caso do áudio da Bruna).
+  const falouEm = ultimaFalaDoAssistente(hist);
   const horas =
-    ultima instanceof Date && anterior instanceof Date
-      ? (ultima.getTime() - anterior.getTime()) / 3_600_000
-      : null;
-  const recusado = hist.some((m) => COMPROVANTE_RECUSADO.test(m.content));
+    ultima instanceof Date && falouEm ? (ultima.getTime() - falouEm.getTime()) / 3_600_000 : null;
+  const anexo = classificarUltimoAnexo(hist);
   return {
     valores: algum(hist, 'assistant', VALORES),
     modalidade: modalidadeDita(hist),
@@ -80,8 +124,9 @@ export function extrairSinais(hist: MensagemHistorico[]): SinaisRetomada {
     ),
     pixEnviado: algum(hist, 'assistant', PIX),
     opcaoEscolhida: algum(hist, 'user', OPCAO_DECIDIDA),
-    comprovanteOk: !recusado && hist.some((m) => COMPROVANTE_CABECA.test(m.content)),
-    comprovanteRecusado: recusado,
+    comprovanteOk: anexo === 'comprovante',
+    comprovanteRecusado: anexo === 'recusado',
+    anexoNaoComprovante: anexo === 'nao_comprovante',
     horasDesdeUltimoContato: horas,
   };
 }
@@ -100,6 +145,12 @@ export function proximaEtapa(s: SinaisRetomada, opts: EtapaOpts = {}): string {
   if (s.comprovanteRecusado)
     return 'o último comprovante NÃO foi aceito — siga o que o marcador da análise manda: peça o pagamento para a chave correta da clínica, sem confirmar nada';
   if (s.comprovanteOk) return 'conferir o comprovante recebido e seguir exatamente o que o marcador da análise manda';
+  // foto que NÃO é comprovante nunca vira cobrança: se o Pix já foi enviado dá pra
+  // pedir o comprovante, senão a pessoa só mandou uma imagem qualquer (print, foto,
+  // documento) e o funil segue de onde estava — pedir pagamento aqui era o caso em
+  // que a Camila cobrava um Pix que nunca tinha sido combinado.
+  if (s.anexoNaoComprovante && s.pixEnviado)
+    return 'a última imagem NÃO era um comprovante — pergunte com gentileza do que se trata e peça o comprovante do Pix que já foi enviado, sem cobrar o pagamento de novo';
   if ((s.opcaoEscolhida || s.pixEnviado) && s.horarioProposto) return 'receber o comprovante do pagamento';
   if (s.horarioProposto) return 'confirmar o horário e perguntar se prefere avulsa ou pacote';
   if (s.valores && !opts.temNome) return 'perguntar como pode chamar a pessoa (só o primeiro nome)';

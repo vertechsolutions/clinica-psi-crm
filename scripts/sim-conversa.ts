@@ -211,7 +211,10 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
     if (/enviou (uma imagem|um anexo)|\[imagem\]|\[anexo\]|coloque a imagem|comprovante.*(imagem|anexo|foto)/i.test(fala)) {
       fala = MARCADOR_COMPROVANTE;
     }
-    history.push({ role: 'user', content: fala });
+    // `at` em toda linha espelha o loadHistory (que traz created_at do Postgres):
+    // sem carimbo o extrairSinais calcula horas=null e o bloco de retomada nunca
+    // sai do ramo [JÁ TRATADO] — o simulador deixaria de exercitar o intervalo.
+    history.push({ role: 'user', content: fala, at: new Date() });
     const ondeParamos = blocoOndeParamos(history, { temNome: Boolean(persona.comNome) });
     const res = await runTriagemSemRepeticao({
       system: ondeParamos ? `${system}\n\n${ondeParamos}` : system,
@@ -221,7 +224,7 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
     // MESMA função da produção: no handoff quem escreve é o código.
     const bolhas = bolhasDoTurno(res, process.env.FORM_URL ?? '');
     const enviado = bolhas.join('\n\n');
-    history.push({ role: 'assistant', content: enviado });
+    history.push({ role: 'assistant', content: enviado, at: new Date() });
     transcript.push({ paciente: fala, camila: enviado, enviarForm: res.enviarForm });
 
     console.log(`\x1b[36mpaciente:\x1b[0m ${fala}`);

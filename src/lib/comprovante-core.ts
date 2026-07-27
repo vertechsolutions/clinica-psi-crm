@@ -94,6 +94,40 @@ export function montarMarcadorComprovante(
   );
 }
 
+/**
+ * Texto da clínica para o turno em que o backstop do webhook derruba o handoff
+ * por anexo inválido. Precisa ser determinístico porque, nesse turno, o prompt
+ * v18 manda o modelo NÃO redigir nada ("o que você redigir é descartado") — sem
+ * esta função o paciente recebia o rascunho descartável (no pior caso o
+ * "Desculpa, pode repetir?") justo na hora em que ele precisa saber que o Pix
+ * foi pra chave errada. Termina em pergunta porque o guard de condução exige
+ * que todo turno avance a conversa.
+ */
+export function mensagemAnexoInvalido(
+  motivo: 'nao_confere' | 'nao_comprovante',
+  pixInfo: string,
+): string {
+  if (motivo === 'nao_comprovante') {
+    return (
+      'Recebi seu arquivo aqui, mas não consegui identificar um comprovante nele. ' +
+      'Pode me enviar o comprovante do Pix, por gentileza?'
+    );
+  }
+  const dados = (pixInfo ?? '').trim();
+  // Sem PIX_INFO configurada não dá pra repetir a chave — pede a conferência sem
+  // inventar dado de pagamento nenhum (chutar chave é pior que não repetir).
+  if (!dados) {
+    return (
+      'Conferi aqui e o pagamento parece ter ido para outro destinatário. ' +
+      'Consegue verificar e me enviar o comprovante do pagamento feito para a clínica?'
+    );
+  }
+  return (
+    `Conferi aqui e o pagamento parece ter ido para outro destinatário — os dados corretos da clínica são: ${dados}. ` +
+    'Consegue verificar e me mandar o comprovante certinho?'
+  );
+}
+
 /** Chave esperada da clínica: PIX_CHAVE (se setada) senão o texto da PIX_INFO. */
 export function chaveEsperada(): string {
   return process.env.PIX_CHAVE?.trim() || process.env.PIX_INFO?.trim() || '';

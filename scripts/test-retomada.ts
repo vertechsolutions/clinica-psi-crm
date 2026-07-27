@@ -108,4 +108,65 @@ assert.ok(/novo|correta|n[ãa]o foi aceito/i.test(etapaRec), 'manda pedir pagame
 const naoComprovante = [h('user', montarMarcadorComprovante({ ...ANALISE, ehComprovante: false }, 'inconclusivo'))];
 assert.equal(extrairSinais(naoComprovante).comprovanteOk, false, 'imagem qualquer nao vira comprovante');
 
+// recusa nao pode ser pegajosa: paciente pagou pra chave errada e REFEZ certo
+const refezOPix = [
+  h('user', 'quero individual'),
+  h('user', montarMarcadorComprovante({ ...ANALISE, chaveDestino: '+55 11 91234-5678' }, 'nao_confere')),
+  h('assistant', 'Esse comprovante parece ter sido feito para outro destinatário, pode verificar?'),
+  h('user', montarMarcadorComprovante(ANALISE, 'confere')),
+];
+const sRefez = extrairSinais(refezOPix);
+assert.equal(sRefez.comprovanteOk, true, 'vale o ULTIMO anexo: comprovante refeito e valido');
+assert.equal(sRefez.comprovanteRecusado, false, 'recusa antiga nao fica pegajosa');
+
+// analise indisponivel conta como comprovante recebido (e o que o marcador manda)
+assert.equal(
+  extrairSinais([h('user', montarMarcadorComprovante(null, 'inconclusivo'))]).comprovanteOk,
+  true,
+  'analise indisponivel = possivel comprovante',
+);
+
+// foto qualquer SEM Pix combinado: sinal separado, e nunca vira cobranca
+const soUmaFoto = [
+  h('user', 'oi, tudo bem?'),
+  h('user', montarMarcadorComprovante({ ...ANALISE, ehComprovante: false }, 'inconclusivo')),
+];
+const sFoto = extrairSinais(soUmaFoto);
+assert.equal(sFoto.anexoNaoComprovante, true, 'imagem qualquer e sinal SEPARADO');
+assert.equal(sFoto.comprovanteRecusado, false, 'imagem qualquer nao e recusa de pagamento');
+assert.ok(
+  !/pagamento|comprovante/i.test(proximaEtapa(sFoto)),
+  'sem Pix enviado, imagem qualquer NAO manda pedir pagamento',
+);
+
+// frase da PROPRIA Camila nao pode ligar a recusa (so marcador de anexo classifica)
+const camilaFalando = [
+  h('user', 'quero individual'),
+  h('assistant', 'o valor não confere, pode verificar?'),
+];
+assert.equal(
+  extrairSinais(camilaFalando).comprovanteRecusado,
+  false,
+  'texto da Camila nao e marcador de anexo',
+);
+
+// intervalo: mede desde a ULTIMA fala da Camila, nao desde a mensagem anterior
+const TRES_DIAS_ATRAS = new Date('2026-07-24T09:00:00Z');
+const VOLTOU = new Date('2026-07-27T09:00:00Z');
+const VOLTOU_10S = new Date('2026-07-27T09:00:10Z');
+const duasSeguidas: MensagemHistorico[] = [
+  h('user', 'oi, quero terapia individual', TRES_DIAS_ATRAS),
+  h('assistant', 'A avulsa é R$ 75,00 e o pacote mensal R$ 280,00.', TRES_DIAS_ATRAS),
+  h('user', 'bom dia', VOLTOU),
+  h('user', 'gostaria de agendar', VOLTOU_10S),
+];
+const sDuas = extrairSinais(duasSeguidas);
+assert.ok(
+  sDuas.horasDesdeUltimoContato !== null && sDuas.horasDesdeUltimoContato > 24,
+  'gap contado desde a ultima fala da Camila',
+);
+const bDuas = blocoOndeParamos(duasSeguidas);
+assert.ok(/ONDE PARAMOS/.test(bDuas), 'segunda mensagem seguida ainda e retomada');
+assert.ok(/3 dias/.test(bDuas), 'informa quantos dias a pessoa ficou fora');
+
 console.log('test-retomada: todos os asserts passaram ✔');

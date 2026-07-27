@@ -20,6 +20,7 @@ import { transcribeAudio } from '@/lib/transcribe';
 import { analisarComprovante } from '@/lib/comprovante';
 import {
   chaveEsperada,
+  mensagemAnexoInvalido,
   montarMarcadorComprovante,
   verificarDestinatario,
   type AnaliseComprovante,
@@ -204,7 +205,17 @@ export async function POST(req: Request): Promise<Response> {
         console.warn(
           `[comprovante] enviarForm suprimido: anexo inválido (verificacao=${comprovante.verificacao}, ehComprovante=${comprovante.analise?.ehComprovante}).`,
         );
-        turno = { ...turno, enviarForm: false };
+        // Além de suprimir o handoff, TROCA a resposta pelo texto da clínica: no
+        // turno do comprovante o prompt v18 manda o modelo não redigir nada ("o
+        // que você redigir é descartado"), então o rascunho que sobraria é uma
+        // frase trivial (ou o "Desculpa, pode repetir?") — justo quando o
+        // paciente precisa saber que o Pix foi pra chave errada.
+        const motivo = comprovante.verificacao === 'nao_confere' ? 'nao_confere' : 'nao_comprovante';
+        turno = {
+          ...turno,
+          enviarForm: false,
+          resposta: mensagemAnexoInvalido(motivo, process.env.PIX_INFO ?? ''),
+        };
       }
       // Entrega em bolhas: se a resposta trouxe parágrafos ou ficou longa, manda
       // 2–3 mensagens seguidas (UX de conversa). Se falhar, lança e não persiste.
