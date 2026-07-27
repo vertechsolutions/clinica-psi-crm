@@ -344,6 +344,18 @@ Feedback da Bruna em 27/07 (2 áudios + 4 prints no WhatsApp):
 
 **Validação**: 10/10 testes puros (novos `test-fechamento`, `test-retomada`), `tsc` limpo, `npm run build`
 ok, **`test-triagem` 25/25** (os 2 cenários novos de retomada e os 2 de comprovante inválido entre eles).
+`sim-conversa passivo` fecha o funil em 8 turnos e o encerramento sai nas 4 bolhas oficiais, na ordem, com
+o link na primeira. `replay` das 6 conversas reais (65 turnos, com gaps reais de 12h/17h/186h/425h — o
+`[ONDE PARAMOS]` foi exercitado de verdade): **zero reaberturas com boas-vindas fora do turno 1** e as
+perguntas de nome caíram de 5 pra 3, todas na ***6930 (casal sem nome na ficha, onde perguntar é correto).
+
+⚠️ **Limite metodológico do `replay` (descoberto aqui):** ele reinjeta as respostas ANTIGAS no histórico,
+então o sinal `valores` do bloco raramente liga — na ***8676, só 1 das 18 respostas da Camila antiga tinha
+valores. Resultado: no replay ela reinforma os valores em turnos seguidos, o que parece regressão e **não
+é** (dado aquele histórico, informar é o certo; em produção a própria resposta dela é gravada e o sinal
+liga). Ou seja: **o replay não serve pra validar retomada/não-repetição** — quem valida é o cenário do
+`test-triagem` com histórico semeado. Se for útil, vale um modo auto-consistente no replay (histórico com
+as respostas NOVAS) numa próxima leva.
 Plano: `docs/superpowers/plans/2026-07-27-camila-fechamento-e-retomada.md`. Spec:
 `docs/superpowers/specs/2026-07-27-camila-fechamento-e-retomada-design.md`. Mensagem pra Bruna:
 `mensagem-bruna-v18.md`.
