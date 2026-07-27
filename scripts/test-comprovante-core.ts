@@ -58,4 +58,11 @@ assert.ok(/N[ÃA]O parece ser um comprovante/i.test(mNao), 'marcador de não-com
 const mFalha = montarMarcadorComprovante(null, 'inconclusivo');
 assert.ok(/an[áa]lise autom[áa]tica indispon[íi]vel/i.test(mFalha), 'fallback fail-open');
 
+// chave definitiva da clínica (CNPJ) — comparação por sufixo de 8 dígitos
+const PIX_CNPJ = 'Chave Pix (CNPJ): 53480459000104 — em nome de Cazule Psicologia';
+assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '53480459000104' }, PIX_CNPJ), 'confere');
+assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '53.480.459/0001-04' }, PIX_CNPJ), 'confere');
+assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '53480459000104' }, '53480459000104'), 'confere');
+assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '12.345.678/0001-99' }, PIX_CNPJ), 'nao_confere');
+
 console.log('test-comprovante-core: todos os asserts passaram ✔');

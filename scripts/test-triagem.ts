@@ -35,8 +35,8 @@ import { blocoContatoDe } from '../src/lib/contato';
 const ANALISE_OK: AnaliseComprovante = {
   ehComprovante: true,
   valor: 75,
-  nomeDestinatario: 'Bruna Amorim',
-  chaveDestino: '+55 27 98117-8233',
+  nomeDestinatario: 'Cazule Psicologia',
+  chaveDestino: '53480459000104',
   instituicao: 'Nubank',
   dataHora: '20/07/2026 15:10',
 };
@@ -64,7 +64,7 @@ const AGENDA_FAKE = resumoDisponibilidade(
 const SYSTEM =
   DEFAULT_PROMPT.replaceAll(
     '{PIX_INFO}',
-    'Chave Pix (celular): +55 27 98117-8233 — em nome de Bruna (Clínica Cazule)',
+    'Chave Pix (CNPJ): 53480459000104 — em nome de Cazule Psicologia',
   ) + `\n\n${AGENDA_FAKE}`;
 
 type Turno = { fala: string; res: TriagemResult };
@@ -230,7 +230,7 @@ const cenarios: Cenario[] = [
     ],
     checar: (t) => {
       const todas = todasRespostas(t);
-      const temPix = /98117-8233|981178233/.test(todas);
+      const temPix = /53480459000104|53\.480\.459/.test(todas);
       const pedeComprovante = /comprovante/i.test(todas);
       return {
         ok: temPix && pedeComprovante,

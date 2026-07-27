@@ -34,8 +34,8 @@ import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/c
 const COMPROVANTE_FAKE: AnaliseComprovante = {
   ehComprovante: true,
   valor: 75,
-  nomeDestinatario: 'Bruna Amorim',
-  chaveDestino: '+55 27 98117-8233',
+  nomeDestinatario: 'Cazule Psicologia',
+  chaveDestino: '53480459000104',
   instituicao: 'Nubank',
   dataHora: '20/07/2026 15:10',
 };
@@ -44,7 +44,7 @@ const MARCADOR_COMPROVANTE = montarMarcadorComprovante(COMPROVANTE_FAKE, 'confer
 /** Espelha o computeReply: substitui {FORM_URL} e {PIX_INFO} pelos valores reais. */
 const SYSTEM = DEFAULT_PROMPT.replaceAll('{FORM_URL}', process.env.FORM_URL || '{FORM_URL}').replaceAll(
   '{PIX_INFO}',
-  process.env.PIX_INFO || 'Chave Pix (celular): +55 27 98117-8233 — em nome de Bruna (Clínica Cazule)',
+  process.env.PIX_INFO || 'Chave Pix (CNPJ): 53480459000104 — em nome de Cazule Psicologia',
 );
 
 /**
