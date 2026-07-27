@@ -293,6 +293,9 @@ const cenarios: Cenario[] = [
   },
   {
     nome: 'retomada no dia seguinte -> NAO repassa valores de novo',
+    // a Marina se apresenta no historico: em producao o nome ja estaria na ficha
+    // e o [DADOS DO CONTATO] existiria, entao o bloco nao pode mandar pedir o nome
+    temNome: true,
     falas: ['bom dia, gostaria de agendar'],
     historico: [
       { role: 'user' as const, content: 'oi, quero terapia individual', at: new Date('2026-07-16T20:00:00Z') },
@@ -317,6 +320,8 @@ const cenarios: Cenario[] = [
   },
   {
     nome: 'paciente PEDE o valor de novo -> pode repetir',
+    // idem: a Marina ja se apresentou no historico desta fixture
+    temNome: true,
     falas: ['qual era o valor mesmo?'],
     historico: [
       { role: 'user' as const, content: 'oi, quero terapia individual', at: new Date('2026-07-16T20:00:00Z') },
