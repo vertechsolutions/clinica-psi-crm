@@ -8,10 +8,19 @@
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
 
-  // avisos de configuração que afetam a segurança do webhook
+  // avisos de configuração que afetam a segurança do webhook. Ambos os providers
+  // são fail-closed: sem o segredo, o webhook recusa TODA mensagem.
+  const provider = (process.env.WA_PROVIDER || 'zapi').trim().toLowerCase();
   if (process.env.NODE_ENV === 'production') {
-    if (!process.env.WHATSAPP_APP_SECRET)
+    console.log(`[boot] transporte WhatsApp: ${provider}`);
+    if (provider === 'meta' && !process.env.WHATSAPP_APP_SECRET)
       console.error('[boot] WHATSAPP_APP_SECRET ausente — o webhook vai RECUSAR mensagens até configurar.');
+    if (provider !== 'meta') {
+      if (!process.env.ZAPI_WEBHOOK_SECRET)
+        console.error('[boot] ZAPI_WEBHOOK_SECRET ausente — o webhook vai RECUSAR mensagens até configurar.');
+      if (!process.env.ZAPI_INSTANCE_ID || !process.env.ZAPI_INSTANCE_TOKEN)
+        console.error('[boot] ZAPI_INSTANCE_ID/ZAPI_INSTANCE_TOKEN ausentes — a Camila não consegue responder.');
+    }
     if (!process.env.ADMIN_API_KEY)
       console.error('[boot] ADMIN_API_KEY ausente — os endpoints admin vão recusar acesso.');
   }

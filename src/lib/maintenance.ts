@@ -22,6 +22,9 @@ export async function cleanupExpired(): Promise<{ conversas: number; mensagens: 
      )`,
   );
   const conv = await query(`DELETE FROM wa_conversations WHERE ${expiraWhere()}`);
+  // ids de envio só servem pra reconhecer o eco, que chega em segundos — depois
+  // de um dia viram lixo. Sem isto a tabela cresceria pra sempre.
+  await query(`DELETE FROM wa_outbound WHERE created_at < now() - interval '1 day'`);
   return { mensagens: msgs.rowCount ?? 0, conversas: conv.rowCount ?? 0 };
 }
 

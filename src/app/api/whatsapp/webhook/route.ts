@@ -1,19 +1,25 @@
 import { after } from 'next/server';
 import {
+  autenticarWebhook,
   downloadMedia,
-  getVerifyToken,
-  isValidSignature,
   markReadAndType,
+  parseWebhook,
+  providerNome,
   sendInternalAlert,
   sendText,
   sendTextSequence,
+  verifyChallenge,
+  type MensagemRecebida,
 } from '@/lib/whatsapp';
 import {
   computeReply,
+  foiNossoEnvio,
   isPaused,
   pauseConversation,
   persistReply,
+  recordAssistantMessage,
   recordUserMessage,
+  registrarEnvios,
 } from '@/lib/conversation';
 import { bolhasDoTurno } from '@/lib/fechamento';
 import { transcribeAudio } from '@/lib/transcribe';
@@ -63,18 +69,33 @@ function alertRecipients(): string[] {
 }
 
 /**
- * Verificação do webhook (Meta chama ao configurar o Callback URL no App Dashboard).
- * Responde o hub.challenge cru quando o verify_token bate.
+ * Trava de estreia. O transporte agora é o WhatsApp PROFISSIONAL da Bruna, que
+ * já tem conversas em andamento — sem isto a Camila responderia todo mundo que
+ * escrever, inclusive contato pessoal e paciente que já está sendo atendido por
+ * ela. Com `WA_ALLOWLIST` preenchida, só esses números falam com a IA; os outros
+ * são ignorados por completo (nem gravamos — dado de terceiro que não pediu
+ * triagem não entra no banco). Vazia = atende todo mundo (operação normal).
+ */
+function allowlist(): string[] {
+  return (process.env.WA_ALLOWLIST || '')
+    .split(',')
+    .map((s) => s.replace(/\D/g, ''))
+    .filter(Boolean);
+}
+
+function atende(waId: string): boolean {
+  const lista = allowlist();
+  return lista.length === 0 || lista.includes(waId);
+}
+
+/**
+ * Verificação do webhook por GET — a Meta chama ao configurar o Callback URL e
+ * espera o hub.challenge cru de volta. A Z-API não faz handshake (a URL é colada
+ * no painel da instância), então lá isto sempre responde 403.
  */
 export async function GET(req: Request): Promise<Response> {
-  const url = new URL(req.url);
-  const mode = url.searchParams.get('hub.mode');
-  const token = url.searchParams.get('hub.verify_token');
-  const challenge = url.searchParams.get('hub.challenge');
-
-  if (mode === 'subscribe' && token && token === getVerifyToken()) {
-    return new Response(challenge ?? '', { status: 200 });
-  }
+  const challenge = verifyChallenge(new URL(req.url));
+  if (challenge !== null) return new Response(challenge, { status: 200 });
   return new Response('Forbidden', { status: 403 });
 }
 
@@ -91,27 +112,24 @@ interface ExtractResult {
  * rico com o veredito — em falha de análise, fail-open (marcador simples, a
  * equipe confere). Outros tipos devolvem null e o webhook pede texto.
  */
-async function extractText(msg: WebhookMessage): Promise<ExtractResult> {
-  if (msg.type === 'text') {
-    return { texto: msg.text?.body?.trim() || null };
+async function extractText(msg: MensagemRecebida): Promise<ExtractResult> {
+  if (msg.tipo === 'text') {
+    return { texto: msg.texto || null };
   }
-  if (msg.type === 'audio' || msg.type === 'voice') {
-    const mediaId = msg.audio?.id || msg.voice?.id;
-    if (!mediaId) return { texto: null };
-    const media = await downloadMedia(mediaId);
+  if (msg.tipo === 'audio') {
+    if (!msg.midia) return { texto: null };
+    const media = await downloadMedia(msg.midia);
     if (!media) return { texto: null };
     const text = await transcribeAudio(media.bytes, media.mimeType);
     if (!text) return { texto: null };
     // marca no histórico que veio de áudio (útil pra revisão + a IA pode ler)
     return { texto: `[áudio transcrito]: ${text}` };
   }
-  if (msg.type === 'image' || msg.type === 'document') {
-    const mediaId = msg.image?.id || msg.document?.id;
-    const mime = msg.image?.mime_type || msg.document?.mime_type || 'image/jpeg';
+  if (msg.tipo === 'image' || msg.tipo === 'document') {
     let analise: AnaliseComprovante | null = null;
-    if (mediaId) {
-      const media = await downloadMedia(mediaId);
-      if (media) analise = await analisarComprovante(media.bytes, media.mimeType || mime);
+    if (msg.midia) {
+      const media = await downloadMedia(msg.midia);
+      if (media) analise = await analisarComprovante(media.bytes, media.mimeType || 'image/jpeg');
     }
     // PIX_INFO vai junto como titular: chaveEsperada() prioriza a PIX_CHAVE (só o
     // número), e sem o nome da clínica um comprovante com a chave mascarada pelo
@@ -120,10 +138,40 @@ async function extractText(msg: WebhookMessage): Promise<ExtractResult> {
       ? verificarDestinatario(analise, chaveEsperada(), process.env.PIX_INFO)
       : 'inconclusivo';
     const marca = montarMarcadorComprovante(analise, verificacao);
-    const caption = (msg.image?.caption || msg.document?.caption)?.trim();
-    return { texto: caption ? `${marca} Legenda: ${caption}` : marca, comprovante: { analise, verificacao } };
+    return {
+      texto: msg.legenda ? `${marca} Legenda: ${msg.legenda}` : marca,
+      comprovante: { analise, verificacao },
+    };
   }
   return { texto: null };
+}
+
+/**
+ * Eco de mensagem que SAIU do número da clínica (só a Z-API entrega isso). Duas
+ * origens possíveis:
+ * - a própria Camila (id registrado em `wa_outbound` no envio) → ignora, senão a
+ *   IA se pausaria sozinha a cada resposta;
+ * - a Bruna digitando no celular → a humana assumiu: grava no histórico e PAUSA
+ *   a IA nesse número, pra não existirem duas vozes na mesma conversa.
+ *
+ * Só volta pela mão da equipe (`resumeConversation`) — é o mesmo estado do
+ * handoff, e por isso a Camila não retoma sozinha depois.
+ */
+async function tratarEco(msg: MensagemRecebida): Promise<void> {
+  if (await foiNossoEnvio(msg.messageId)) return;
+  // Corrida: o eco pode chegar antes de o id do nosso envio estar gravado. Uma
+  // segunda olhada depois de um respiro evita pausar a conversa por engano —
+  // custo de um falso positivo aqui é a Camila emudecer sem ninguém ter assumido.
+  await new Promise((r) => setTimeout(r, 2000));
+  if (await foiNossoEnvio(msg.messageId)) return;
+  const texto = msg.texto || `[${msg.tipoCru} enviado pela equipe]`;
+  const isNew = await recordAssistantMessage(msg.waId, texto, msg.messageId);
+  if (!isNew) return; // reentrega do mesmo eco
+  const jaPausada = await isPaused(msg.waId);
+  if (!jaPausada) {
+    await pauseConversation(msg.waId);
+    console.log(`[webhook] atendimento humano detectado em ${msg.waId} — IA pausada nesse número.`);
+  }
 }
 
 /**
@@ -138,30 +186,41 @@ async function extractText(msg: WebhookMessage): Promise<ExtractResult> {
 export async function POST(req: Request): Promise<Response> {
   const raw = await req.text();
 
-  if (!isValidSignature(raw, req.headers.get('x-hub-signature-256'))) {
+  if (!autenticarWebhook(raw, { headers: req.headers, url: new URL(req.url) })) {
     return new Response('Invalid signature', { status: 401 });
   }
 
-  let payload: WebhookPayload;
-  try {
-    payload = JSON.parse(raw) as WebhookPayload;
-  } catch {
-    return new Response('Bad JSON', { status: 400 });
-  }
-
-  const value = payload.entry?.[0]?.changes?.[0]?.value;
-  const msg = value?.messages?.[0];
-
+  const msg = parseWebhook(raw)[0];
   if (!msg) return new Response('ok', { status: 200 });
+
+  if (!atende(msg.waId)) {
+    // fora da allowlist da estreia: nem grava, nem responde (LGPD — é conversa
+    // de terceiro que não pediu triagem). Loga mascarado só pra diagnóstico.
+    console.log(`[webhook] número fora da WA_ALLOWLIST (***${msg.waId.slice(-4)}) — ignorado.`);
+    return new Response('ok', { status: 200 });
+  }
 
   if (!hasDb) {
     console.warn('[webhook] mensagem recebida mas DATABASE_URL ausente — ignorada.');
     return new Response('ok', { status: 200 });
   }
 
-  const from = msg.from;
-  const wamid = msg.id;
-  const nome = value?.contacts?.[0]?.profile?.name;
+  // Saiu do número da clínica: ou é o eco da própria Camila, ou a Bruna assumiu
+  // pelo celular. Nunca é um turno pra IA responder.
+  if (msg.fromMe) {
+    after(async () => {
+      try {
+        await tratarEco(msg);
+      } catch (err) {
+        console.error('[webhook] erro ao tratar eco', err);
+      }
+    });
+    return new Response('ok', { status: 200 });
+  }
+
+  const from = msg.waId;
+  const wamid = msg.messageId;
+  const nome = msg.nome;
 
   after(async () => {
     try {
@@ -174,17 +233,18 @@ export async function POST(req: Request): Promise<Response> {
 
       if (texto == null) {
         // mídia que a gente não trata (áudio ilegível, sticker, vídeo, etc.)
-        const isNew = await recordUserMessage(from, `[${msg.type}]`, wamid);
+        const isNew = await recordUserMessage(from, `[${msg.tipoCru}]`, wamid);
         if (!isNew) return;
-        await markReadAndType(wamid);
+        await markReadAndType(msg);
         if (paused) return; // pausada: nem pede texto, deixa quieto
-        const fallback = msg.type === 'audio' || msg.type === 'voice' ? PEDE_TEXTO : PEDE_TEXTO_OUTRAS_MIDIAS;
-        await sendText(from, fallback);
+        const fallback = msg.tipo === 'audio' ? PEDE_TEXTO : PEDE_TEXTO_OUTRAS_MIDIAS;
+        const id = await sendText(from, fallback);
+        if (id) await registrarEnvios([id]);
         return;
       }
 
       const isNew = await recordUserMessage(from, texto, wamid);
-      if (!isNew) return; // reentrega da Meta: já processada
+      if (!isNew) return; // reentrega do provider: já processada
 
       if (paused) {
         // grava a mensagem entrante mas NÃO responde — silêncio da IA é o
@@ -193,7 +253,7 @@ export async function POST(req: Request): Promise<Response> {
         return;
       }
 
-      await markReadAndType(wamid);
+      await markReadAndType(msg);
       let turno: Awaited<ReturnType<typeof computeReply>>;
       try {
         turno = await computeReply(from, nome);
@@ -230,7 +290,7 @@ export async function POST(req: Request): Promise<Response> {
       if (turno.enviarForm && !process.env.FORM_URL) {
         console.warn('[webhook] enviarForm=true sem FORM_URL — o fechamento vai sem o link.');
       }
-      await sendTextSequence(from, bolhas);
+      await sendTextSequence(from, bolhas, { onSent: (id) => registrarEnvios([id]) });
       try {
         // grava o que o paciente REALMENTE recebeu (no handoff, o texto oficial)
         await persistReply(from, nome, { ...turno, resposta: bolhas.join('\n\n') });
@@ -305,29 +365,11 @@ async function notifyTeam(
     'A IA está pausada nesse número — a conversa agora é de vocês. 💙',
   ].filter(Boolean) as string[];
   const body = linhas.join('\n');
-  await Promise.all(recipients.map((to) => sendInternalAlert(to, body)));
+  // o alerta também sai do número da clínica: registra os ids pra que o eco não
+  // seja lido como "a equipe assumiu a conversa" com a Bruna ou com o dev.
+  const ids = await Promise.all(recipients.map((to) => sendInternalAlert(to, body)));
+  await registrarEnvios(ids.filter((id): id is string => Boolean(id)));
 }
 
-// ---- tipos mínimos do payload do WhatsApp que a gente usa ----
-interface WebhookMessage {
-  from: string;
-  id: string;
-  type: string;
-  text?: { body?: string };
-  audio?: { id?: string; mime_type?: string; voice?: boolean };
-  voice?: { id?: string; mime_type?: string };
-  image?: { id?: string; mime_type?: string; caption?: string };
-  document?: { id?: string; mime_type?: string; filename?: string; caption?: string };
-}
-
-interface WebhookPayload {
-  entry?: Array<{
-    changes?: Array<{
-      value?: {
-        contacts?: Array<{ profile?: { name?: string }; wa_id?: string }>;
-        messages?: WebhookMessage[];
-        statuses?: unknown[];
-      };
-    }>;
-  }>;
-}
+// O payload cru (Meta ou Z-API) é problema do provider: aqui só circula a
+// MensagemRecebida normalizada de `src/lib/wa/types.ts`.

@@ -59,7 +59,11 @@ criado sozinho no primeiro boot (`instrumentation.ts`).
 |---|---|
 | `GEMINI_API_KEY` | key do Google AI Studio |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
-| `WHATSAPP_TOKEN` | token permanente (System User) do app Meta |
+| `WA_PROVIDER` | `zapi` (default) ou `meta` — qual transporte entrega as mensagens |
+| `ZAPI_INSTANCE_ID` / `ZAPI_INSTANCE_TOKEN` | da instância no painel da Z-API (`WA_PROVIDER=zapi`) |
+| `ZAPI_CLIENT_TOKEN` | token de segurança da conta Z-API (aba Segurança) |
+| `ZAPI_WEBHOOK_SECRET` | segredo que **você** inventa; vai na query da URL do webhook (ver passo 3) |
+| `WHATSAPP_TOKEN` | token permanente (System User) do app Meta (`WA_PROVIDER=meta`) |
 | `WHATSAPP_PHONE_NUMBER_ID` | ID do número da clínica (WhatsApp Manager) — muda se o número mudar |
 | `WHATSAPP_VERIFY_TOKEN` | uma senha que você inventa (ver passo 3) |
 | `WHATSAPP_APP_SECRET` | App Dashboard → Settings → Basic → App Secret |
@@ -70,15 +74,16 @@ criado sozinho no primeiro boot (`instrumentation.ts`).
 | `GEMINI_TRANSCRIBE_MODEL` | `gemini-2.5-flash-lite` (transcrição de áudio, mais barato — opcional) |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | JSON da service account (uma linha) — agenda no Sheets (opcional) |
 | `AGENDA_SHEET_ID` | id da planilha `Cazule — Agenda` no Google Sheets (opcional) |
-| `FOLLOWUP_ENABLED` | `false` por padrão — reengajamento proativo é **opt-in** (`true` só com template aprovado) |
-| `FOLLOWUP_TEMPLATE_NAME` | nome do template Meta aprovado p/ reengajar fora da janela de 24h |
+| `FOLLOWUP_ENABLED` | `false` por padrão — reengajamento proativo é **opt-in** |
+| `FOLLOWUP_TEMPLATE_NAME` | template Meta p/ reengajar fora da janela de 24h — **só** com `WA_PROVIDER=meta` |
 
 > Sem `GOOGLE_SERVICE_ACCOUNT_JSON`/`AGENDA_SHEET_ID` o app funciona normal — a Camila
 > só não enxerga a agenda (diz que vai confirmar horário com a equipe). Diagnóstico da
 > integração: `npx tsx --env-file=.env.local scripts/test-sheets-live.ts`.
 
-> **Importante (fail-closed):** sem `WHATSAPP_APP_SECRET` o webhook recusa toda
-> mensagem; sem `ADMIN_API_KEY` os endpoints admin recusam acesso. Configure ambos.
+> **Importante (fail-closed):** o webhook recusa toda mensagem sem o segredo do
+> provider ativo — `ZAPI_WEBHOOK_SECRET` (zapi) ou `WHATSAPP_APP_SECRET` (meta).
+> Sem `ADMIN_API_KEY` os endpoints admin recusam acesso. Configure os dois.
 
 Via CLI (opcional; dá pra fazer tudo no dashboard):
 
@@ -92,7 +97,32 @@ railway variables --set "WHATSAPP_VERIFY_TOKEN=<sua-senha>"
 
 Build/start e healthcheck já vêm do `railway.json`.
 
-### 3. Configurar o webhook no Meta
+### 3. Configurar o webhook
+
+#### Z-API (`WA_PROVIDER=zapi`) — o caminho atual
+
+1. Crie a instância em https://app.z-api.io e anote **ID**, **Token** e o
+   **Client-Token** (aba Segurança).
+2. Em **Instância → Editar**, leia o **QR code** com o celular da clínica
+   (WhatsApp → Aparelhos conectados). O número continua funcionando no celular:
+   a Camila e a Bruna dividem a mesma linha.
+3. Em **Webhooks**, configure o **"Ao receber"** com a URL do app **incluindo o
+   segredo na query**:
+
+   ```
+   https://<seu-dominio-railway>/api/whatsapp/webhook?s=<ZAPI_WEBHOOK_SECRET>
+   ```
+
+   Marque a opção de **receber também as mensagens enviadas pelo próprio
+   número** — é o que faz a IA se calar sozinha quando a Bruna responde pelo
+   celular. Os outros webhooks (status, entrega) podem ficar desligados: são
+   ignorados.
+
+> A Z-API **não assina** o webhook (o Client-Token protege só as chamadas que o
+> app faz pra ela). O `?s=` é a autenticação: trate como senha, não mande por
+> canal público, e troque a variável se vazar.
+
+#### Meta (`WA_PROVIDER=meta`)
 
 No **App Dashboard → WhatsApp → Configuration → Webhook**:
 

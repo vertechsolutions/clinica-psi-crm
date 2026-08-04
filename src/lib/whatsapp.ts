@@ -1,73 +1,56 @@
 /**
- * Cliente mínimo da WhatsApp Cloud API (Graph API). Só o necessário pra um bot de
- * atendimento reativo: enviar texto, marcar como lida e mostrar "digitando".
- * Docs: https://developers.facebook.com/documentation/business-messaging/whatsapp
+ * Fachada de mensageria: o resto do app fala com este módulo e não sabe qual
+ * transporte está atrás. A escolha é a env `WA_PROVIDER`:
+ *
+ *   zapi (default) — Z-API, número pareado por QR code no celular da Bruna
+ *   meta           — WhatsApp Cloud API (Graph API), o transporte do piloto
+ *
+ * Voltar atrás é trocar a variável e reiniciar; o código dos dois vive lado a
+ * lado em `src/lib/wa/`.
  */
-import crypto from 'node:crypto';
+import { metaProvider } from './wa/meta';
+import { zapiProvider } from './wa/zapi';
+import type { MensagemRecebida, Midia, MidiaRef, RequisicaoWebhook, WaProvider } from './wa/types';
 
-const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v25.0';
-const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
+export type { MensagemRecebida, Midia, MidiaRef, RequisicaoWebhook };
+export { normalizarWaId } from './wa/types';
 
-const TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-const APP_SECRET = process.env.WHATSAPP_APP_SECRET;
-const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
-
-/** true quando dá pra enviar mensagens (token + phone id presentes). */
-export const canSend = Boolean(TOKEN && PHONE_ID);
-
-export function getVerifyToken(): string | undefined {
-  return VERIFY_TOKEN;
+function escolher(): WaProvider {
+  const escolhido = (process.env.WA_PROVIDER || 'zapi').trim().toLowerCase();
+  if (escolhido === 'meta') return metaProvider;
+  if (escolhido !== 'zapi') {
+    console.warn(`[whatsapp] WA_PROVIDER="${escolhido}" desconhecido — usando zapi.`);
+  }
+  return zapiProvider;
 }
 
-/**
- * Valida a assinatura X-Hub-Signature-256: HMAC-SHA256 do RAW body com o App
- * Secret. Precisa dos bytes crus recebidos (não do JSON re-serializado).
- * Fail-closed: sem App Secret configurado, RECUSA tudo (não dá pra confiar na
- * origem). O App Secret é obrigatório pro webhook aceitar mensagens.
- */
-export function isValidSignature(rawBody: string, signatureHeader: string | null): boolean {
-  if (!APP_SECRET) {
-    console.error('[whatsapp] WHATSAPP_APP_SECRET ausente — webhook recusando todas as requisições.');
-    return false;
-  }
-  if (!signatureHeader) return false;
-  const expected = 'sha256=' + crypto.createHmac('sha256', APP_SECRET).update(rawBody).digest('hex');
-  const a = Buffer.from(signatureHeader);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+const provider = escolher();
+
+/** Qual transporte está no ar (aparece no boot e no health). */
+export const providerNome = provider.nome;
+/** true quando dá pra enviar mensagem (credenciais presentes). */
+export const canSend = provider.canSend;
+/** Meta exige template fora da janela de 24h; Z-API não tem janela. */
+export const precisaTemplate = provider.precisaTemplate;
+
+/** Handshake por GET (só a Meta usa). null = recusar com 403. */
+export function verifyChallenge(url: URL): string | null {
+  return provider.verifyChallenge(url);
 }
 
-async function graphPost(body: unknown): Promise<void> {
-  if (!canSend) {
-    console.warn('[whatsapp] envio ignorado — WHATSAPP_TOKEN/PHONE_NUMBER_ID ausentes.');
-    return;
-  }
-  const res = await fetch(`${GRAPH_BASE}/${PHONE_ID}/messages`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    // loga só código/mensagem do erro (nunca o corpo cru, que pode ter telefone do
-    // paciente) e propaga pro caller decidir — o after() do webhook loga no catch.
-    const j = (await res.json().catch(() => ({}))) as { error?: { code?: number; message?: string } };
-    throw new Error(`Graph API ${res.status} code=${j?.error?.code ?? '?'} ${j?.error?.message ?? ''}`.trim());
-  }
+/** Autentica a chamada do webhook. Fail-closed em ambos os providers. */
+export function autenticarWebhook(raw: string, req: RequisicaoWebhook): boolean {
+  return provider.autenticar(raw, req);
 }
 
-/** Envia uma mensagem de texto. `to` é o wa_id que a Meta mandou no webhook. */
-export function sendText(to: string, body: string): Promise<void> {
-  return graphPost({
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to,
-    type: 'text',
-    text: { preview_url: false, body },
-  });
+/** Payload cru → mensagens normalizadas (vazio = evento que não interessa). */
+export function parseWebhook(raw: string): MensagemRecebida[] {
+  return provider.parse(raw);
+}
+
+/** Envia uma mensagem de texto. Devolve o id (usado pra reconhecer o eco). */
+export function sendText(to: string, body: string): Promise<string | null> {
+  return provider.sendText(to, body);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -76,100 +59,56 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * Envia várias mensagens em sequência (bolhas separadas), com um respiro entre
  * elas pra parecer uma pessoa digitando. Usado com splitReply(). Se uma parte
  * falha, propaga (o webhook loga e não persiste) — parte já enviada fica no chat.
+ * Devolve os ids enviados: o webhook os registra pra não confundir o eco da
+ * própria Camila com a Bruna assumindo a conversa no celular.
  */
-export async function sendTextSequence(to: string, parts: string[], delayMs = 900): Promise<void> {
+export async function sendTextSequence(
+  to: string,
+  parts: string[],
+  opts: { delayMs?: number; onSent?: (id: string) => Promise<void> | void } = {},
+): Promise<string[]> {
+  const { delayMs = 900, onSent } = opts;
+  const ids: string[] = [];
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]?.trim();
     if (!p) continue;
-    await sendText(to, p);
+    const id = await sendText(to, p);
+    if (id) {
+      ids.push(id);
+      // registra JÁ (não no fim do laço): o eco desta bolha pode chegar enquanto
+      // as próximas ainda estão sendo enviadas.
+      if (onSent) await onSent(id);
+    }
     if (i < parts.length - 1) await sleep(delayMs);
   }
+  return ids;
 }
 
-/**
- * Envia um template aprovado (Message Template da Meta). Necessário pra falar com
- * um contato FORA da janela de 24h (reengajamento). `name` = nome do template
- * aprovado; sem variáveis no corpo (o texto vive na Meta). lang default pt_BR.
- */
-export function sendTemplate(to: string, name: string, lang = 'pt_BR'): Promise<void> {
-  return graphPost({
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to,
-    type: 'template',
-    template: { name, language: { code: lang } },
-  });
+/** Marca lida + "digitando". Best-effort: nunca lança. */
+export function markReadAndType(msg: { waId: string; messageId: string }): Promise<void> {
+  return provider.markReadAndType(msg);
 }
 
-/**
- * Marca a mensagem como lida e liga o indicador "digitando". O typing some em 25s
- * ou quando a próxima mensagem é enviada — chame logo ao receber. Falha aqui não
- * deve travar o fluxo (best-effort).
- */
-export async function markReadAndType(messageId: string): Promise<void> {
-  try {
-    await graphPost({
-      messaging_product: 'whatsapp',
-      status: 'read',
-      message_id: messageId,
-      typing_indicator: { type: 'text' },
-    });
-  } catch (err) {
-    console.error('[whatsapp] markReadAndType falhou', err);
-  }
+/** Baixa a mídia referenciada na mensagem. null em falha (best-effort). */
+export function downloadMedia(ref: MidiaRef): Promise<Midia | null> {
+  return provider.downloadMedia(ref);
 }
 
-/**
- * Baixa uma mídia (áudio/imagem/documento) do WhatsApp. A Graph API exige dois
- * passos: primeiro GET /{media_id} pra pegar a URL assinada (curta duração),
- * depois GET nessa URL com o mesmo Bearer token pra pegar os bytes.
- * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
- *
- * Retorna null se o download falhar (best-effort — chamador decide como reagir).
- */
-export async function downloadMedia(
-  mediaId: string,
-): Promise<{ bytes: Buffer; mimeType: string } | null> {
-  if (!TOKEN) {
-    console.warn('[whatsapp] downloadMedia ignorado — WHATSAPP_TOKEN ausente.');
-    return null;
-  }
-  try {
-    // 1) resolve a URL da mídia
-    const meta = await fetch(`${GRAPH_BASE}/${mediaId}`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    });
-    if (!meta.ok) {
-      throw new Error(`meta ${meta.status}`);
-    }
-    const info = (await meta.json()) as { url?: string; mime_type?: string };
-    if (!info.url) throw new Error('sem url na resposta');
-
-    // 2) baixa os bytes (mesmo Bearer)
-    const media = await fetch(info.url, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    });
-    if (!media.ok) {
-      throw new Error(`media ${media.status}`);
-    }
-    const buf = Buffer.from(await media.arrayBuffer());
-    const mimeType = info.mime_type || media.headers.get('content-type') || 'application/octet-stream';
-    return { bytes: buf, mimeType };
-  } catch (err) {
-    console.error('[whatsapp] downloadMedia falhou', err);
-    return null;
-  }
+/** Template aprovado — só faz sentido no provider Meta (fora da janela de 24h). */
+export function sendTemplate(to: string, name: string, lang?: string): Promise<string | null> {
+  return provider.sendTemplate(to, name, lang);
 }
 
 /**
  * Envia uma notificação interna pra equipe (Bruna, atendentes, dev) sem quebrar
  * o fluxo do paciente. Falha silenciosa: se der ruim, apenas loga.
- * `to` deve ser wa_id no formato E.164 sem "+" (ex.: "5527981178233").
+ * `to` deve ser E.164 sem "+" (ex.: "5527981178233").
  */
-export async function sendInternalAlert(to: string, body: string): Promise<void> {
+export async function sendInternalAlert(to: string, body: string): Promise<string | null> {
   try {
-    await sendText(to, body);
+    return await sendText(to, body);
   } catch (err) {
     console.error(`[whatsapp] alerta interno pra ${to} falhou`, err);
+    return null;
   }
 }

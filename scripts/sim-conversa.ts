@@ -26,6 +26,8 @@ import { blocoContatoDe } from '../src/lib/contato';
 import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/comprovante-core';
 import { bolhasDoTurno } from '../src/lib/fechamento';
 import { blocoOndeParamos, type MensagemHistorico } from '../src/lib/retomada';
+import { blocoFichaDe, camposPreenchidos } from '../src/lib/ficha';
+import { type LeadExtraido } from '../src/lib/triagem';
 
 /**
  * Comprovante fake (avulsa individual, chave da clínica) — o simulador manda um
@@ -203,6 +205,7 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
   let system = persona.comAgenda ? SYSTEM_COM_AGENDA : SYSTEM;
   if (persona.comNome) system = `${system}\n\n${blocoContatoDe(persona.comNome, undefined)}`;
   let ultimo: Awaited<ReturnType<typeof runTriagemSemRepeticao>> | null = null;
+  let fichaAcumulada: Record<string, unknown> = {};
   for (let i = 0; i < persona.maxTurnos; i++) {
     let fala = await proximaFalaPaciente(ai, persona, transcript);
     if (!fala) break;
@@ -216,10 +219,14 @@ async function rodarPersona(ai: GoogleGenAI, persona: Persona): Promise<Turno[]>
     // sai do ramo [JÁ TRATADO] — o simulador deixaria de exercitar o intervalo.
     history.push({ role: 'user', content: fala, at: new Date() });
     const ondeParamos = blocoOndeParamos(history, { temNome: Boolean(persona.comNome) });
+    // [FICHA DO PACIENTE]: em produção vem do banco (lead mesclado turno a turno);
+    // aqui acumula igual, senão o simulador roda com contexto menor que o real.
+    const fichaBloco = blocoFichaDe(fichaAcumulada as Partial<LeadExtraido>);
     const res = await runTriagemSemRepeticao({
-      system: ondeParamos ? `${system}\n\n${ondeParamos}` : system,
+      system: [system, fichaBloco, ondeParamos].filter(Boolean).join('\n\n'),
       messages: history.map(({ role, content }) => ({ role, content })),
     });
+    fichaAcumulada = { ...fichaAcumulada, ...camposPreenchidos(res.lead) };
     ultimo = res;
     // MESMA função da produção: no handoff quem escreve é o código.
     const bolhas = bolhasDoTurno(res, process.env.FORM_URL ?? '');

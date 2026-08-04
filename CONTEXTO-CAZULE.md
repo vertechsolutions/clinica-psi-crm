@@ -447,6 +447,38 @@ a Cloud API só fala com 5 destinatários de teste); `NOTIFY_ALERT_NUMBERS` fica
 Melhoria óbvia pra próxima leva: ao receber echo da Bruna, chamar `pauseConversation` (a IA cala a
 boca quando a humana entra na conversa antes do handoff).
 
+### Virada de transporte: Meta → Z-API (04/08/2026)
+
+A coexistência da Meta esbarrou em Embedded Signup/Tech Provider, então o piloto
+estreia pela **Z-API**: API não-oficial que pareia o WhatsApp da clínica por QR code
+(mesmo princípio do WhatsApp Web). O número da Bruna **continua no celular dela** — é
+o que resolve o handoff, já que o CRM não tem inbox.
+
+O que a troca deu de graça: acabou a janela de 24h e o template aprovado (o follow-up
+proativo, goal 3, deixou de depender da Meta) e passamos a **saber quando a Bruna
+responde pelo celular** — o eco `fromMe` pausa a IA sozinha.
+
+O que a troca custa, e como está mitigado:
+
+| Risco | Mitigação no código |
+|---|---|
+| Z-API **não assina** o webhook | `ZAPI_WEBHOOK_SECRET` na query (`?s=`) ou header, comparado em tempo constante, **fail-closed** — sem a env o webhook recusa tudo |
+| Eco confundido com atendimento humano (a IA se pausaria a cada resposta) | tabela `wa_outbound` guarda o id de tudo que enviamos; o eco só vira "a Bruna assumiu" se o id for desconhecido — com uma segunda checagem 2s depois pra cobrir a corrida |
+| A Camila responderia **todo mundo** no WhatsApp profissional (contato pessoal, paciente já em atendimento) | `WA_ALLOWLIST`: com a lista preenchida só esses números falam com a IA; os outros são ignorados sem gravar nada |
+| Pausa por intervenção humana sem volta | `POST /api/admin/patient { waId }` (admin) devolve a conversa pra IA |
+| Número banido pela Meta (API não-oficial) | `WA_PROVIDER=meta` volta pro transporte antigo sem deploy — os dois providers vivem em `src/lib/wa/` |
+
+Arquitetura: `src/lib/wa/types.ts` define o contrato (autenticar, parse, sendText,
+markReadAndType, downloadMedia); `meta.ts` e `zapi.ts` implementam; `src/lib/whatsapp.ts`
+virou fachada que escolhe por `WA_PROVIDER` (default `zapi`). O webhook só enxerga a
+`MensagemRecebida` normalizada — miolo (conversa, triagem, comprovante, ficha, agenda,
+fechamento) não mudou uma linha. Teste sem rede: `scripts/test-wa-provider.ts`.
+
+⚠️ **wa_id pode divergir**: a chave das conversas é o número. Se a Z-API entregar o
+telefone em formato diferente do que a Meta entregava (9º dígito), o histórico antigo
+daquele paciente não casa e a conversa recomeça do zero. `normalizarWaId` tira `+`,
+espaço e `@c.us`, mas não adivinha o 9º dígito — conferir no primeiro teste real.
+
 ### Comprovante com CNPJ mascarado (corrigido junto)
 
 `verificarDestinatario` comparava só o **sufixo de 8 dígitos**. Com CNPJ, comprovante que mascara a

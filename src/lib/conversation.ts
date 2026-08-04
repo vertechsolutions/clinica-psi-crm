@@ -52,11 +52,26 @@ export async function recordUserMessage(waId: string, content: string, wamid: st
   return res.rowCount === 1;
 }
 
-export async function recordAssistantMessage(waId: string, content: string): Promise<void> {
-  await query(
-    `INSERT INTO wa_messages (wa_id, role, content) VALUES ($1, 'assistant', $2)`,
-    [waId, content],
+/**
+ * Registra uma fala da clínica. `wamid` é opcional: a resposta da própria Camila
+ * é gravada sem id (o texto entregue pode ser a junção de várias bolhas), mas o
+ * eco do que a Bruna digitou no celular vem com id — e aí o UNIQUE deduplica a
+ * reentrega igual acontece com a mensagem do paciente.
+ * Retorna false quando já existia (só possível quando veio com wamid).
+ */
+export async function recordAssistantMessage(
+  waId: string,
+  content: string,
+  wamid?: string,
+): Promise<boolean> {
+  const res = await query(
+    `INSERT INTO wa_messages (wa_id, role, content, wamid)
+     VALUES ($1, 'assistant', $2, $3)
+     ON CONFLICT (wamid) DO NOTHING
+     RETURNING id`,
+    [waId, content, wamid ?? null],
   );
+  return res.rowCount === 1;
 }
 
 async function loadHistory(waId: string): Promise<MensagemHistorico[]> {
@@ -113,14 +128,69 @@ export async function upsertConversation(
   );
 }
 
-/** Marca a conversa como pausada (handoff pra equipe humana após envio do form). */
+/**
+ * Marca a conversa como pausada. Dois gatilhos: o handoff (a IA enviou o
+ * formulário) e a intervenção humana (a Bruna respondeu pelo celular — só
+ * existe com a Z-API, que ecoa o que sai do número). Cria a linha se ainda não
+ * existir: com a Bruna assumindo antes do primeiro turno da IA, a conversa pode
+ * não ter registro ainda, e um UPDATE puro não pausaria nada.
+ */
 export async function pauseConversation(waId: string): Promise<void> {
   await query(
+    `INSERT INTO wa_conversations (wa_id, pausada, pausada_em)
+     VALUES ($1, TRUE, now())
+     ON CONFLICT (wa_id) DO UPDATE
+        SET pausada = TRUE, pausada_em = now(), updated_at = now()`,
+    [waId],
+  );
+}
+
+/** Devolve a conversa pra IA (a equipe terminou de atender). */
+export async function resumeConversation(waId: string): Promise<boolean> {
+  const res = await query(
     `UPDATE wa_conversations
-        SET pausada = TRUE, pausada_em = now(), updated_at = now()
+        SET pausada = FALSE, pausada_em = NULL, updated_at = now()
       WHERE wa_id = $1`,
     [waId],
   );
+  return res.rowCount === 1;
+}
+
+/**
+ * Guarda os ids do que a Camila acabou de enviar. Serve pra uma coisa só: quando
+ * o eco desse envio voltar pelo webhook (`fromMe: true`), reconhecer que fomos
+ * nós e não a Bruna assumindo a conversa no celular.
+ */
+export async function registrarEnvios(wamids: string[]): Promise<void> {
+  const ids = wamids.filter(Boolean);
+  if (ids.length === 0) return;
+  try {
+    await query(
+      `INSERT INTO wa_outbound (wamid) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING`,
+      [ids],
+    );
+  } catch (e) {
+    // não vale derrubar o turno do paciente por causa do registro do eco
+    console.error('[conversation] registrarEnvios falhou', e);
+  }
+}
+
+/**
+ * Esse id saiu da Camila? Fail-safe ao contrário do isPaused: em erro devolve
+ * TRUE (trata como nosso), porque o custo de errar aqui é pausar a conversa de
+ * um paciente sem ninguém ter assumido de fato.
+ */
+export async function foiNossoEnvio(wamid: string): Promise<boolean> {
+  try {
+    const { rows } = await query<{ wamid: string }>(
+      `SELECT wamid FROM wa_outbound WHERE wamid = $1`,
+      [wamid],
+    );
+    return rows.length > 0;
+  } catch (e) {
+    console.error('[conversation] foiNossoEnvio falhou, assumindo envio próprio', e);
+    return true;
+  }
 }
 
 /** true se a IA deve ficar muda pra esse número (form já enviado, equipe assumiu). */

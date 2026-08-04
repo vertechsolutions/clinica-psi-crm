@@ -3,16 +3,16 @@
  * Cron in-process (como o cleanup LGPD). Gate por env: FOLLOWUP_ENABLED (opt-in)
  * e FOLLOWUP_TEMPLATE_NAME.
  *
- * Canal: na prática o caminho dominante é o TEMPLATE aprovado da Meta — o filtro
- * de leads frios exige updated_at > 24h, e como updated_at é bumpado a cada turno,
- * o último inbound quase sempre também passa de 24h. O caminho 'freeform'
- * (mensagem 7 em texto livre) fica como fallback de exceção (ex.: turno em que a
- * resposta falhou e não foi persistida). Sem template configurado, leads fora da
- * janela são pulados com aviso no log.
+ * Canal: depende do provider. Na Cloud API existe a janela de 24h da Meta — fora
+ * dela só um TEMPLATE aprovado passa, e como o filtro de leads frios exige
+ * updated_at > 24h, o template é o caminho dominante; sem template configurado,
+ * o lead é pulado com aviso no log. Na Z-API não existe janela nem template: é
+ * sempre texto livre (foi o que destravou o goal 3, que estava parado esperando
+ * aprovação da Meta).
  */
 import { query } from './db';
-import { recordAssistantMessage } from './conversation';
-import { sendText, sendTemplate } from './whatsapp';
+import { recordAssistantMessage, registrarEnvios } from './conversation';
+import { precisaTemplate, sendText, sendTemplate } from './whatsapp';
 
 /** Mensagem 7 do FAQ da Bruna — reengajamento dentro da janela de 24h. */
 export const MENSAGEM_RETENCAO =
@@ -26,8 +26,17 @@ const mask = (waId: string) => `***${waId.slice(-4)}`;
 
 export type Canal = 'freeform' | 'template';
 
-/** Decide o canal pelo tempo desde a última mensagem RECEBIDA do paciente. */
-export function decideChannel(lastInboundAt: Date | null, now: Date): Canal {
+/**
+ * Decide o canal pelo tempo desde a última mensagem RECEBIDA do paciente.
+ * `exigeTemplate=false` (Z-API) devolve sempre 'freeform': não há janela de 24h
+ * a respeitar quando o transporte é o próprio WhatsApp da clínica.
+ */
+export function decideChannel(
+  lastInboundAt: Date | null,
+  now: Date,
+  exigeTemplate = true,
+): Canal {
+  if (!exigeTemplate) return 'freeform';
   if (!lastInboundAt) return 'template';
   return now.getTime() - lastInboundAt.getTime() < JANELA_MS ? 'freeform' : 'template';
 }
@@ -77,16 +86,24 @@ export async function runFollowup(now = new Date()): Promise<number> {
   const leads = await findColdLeads();
   let enviados = 0;
   for (const lead of leads) {
-    const canal = decideChannel(lead.last_inbound ? new Date(lead.last_inbound) : null, now);
+    const canal = decideChannel(
+      lead.last_inbound ? new Date(lead.last_inbound) : null,
+      now,
+      precisaTemplate,
+    );
     try {
+      // o id volta pra `wa_outbound`: sem isso o eco do follow-up seria lido como
+      // atendimento humano e pausaria justo o lead que a gente acabou de acordar
+      let enviadoId: string | null = null;
       if (canal === 'freeform') {
-        await sendText(lead.wa_id, MENSAGEM_RETENCAO);
+        enviadoId = await sendText(lead.wa_id, MENSAGEM_RETENCAO);
       } else if (templateName) {
-        await sendTemplate(lead.wa_id, templateName);
+        enviadoId = await sendTemplate(lead.wa_id, templateName);
       } else {
         console.warn(`[followup] ${mask(lead.wa_id)} fora da janela e sem FOLLOWUP_TEMPLATE_NAME — pulando.`);
         continue;
       }
+      if (enviadoId) await registrarEnvios([enviadoId]);
       // Persiste no histórico: quando o lead responder "sim, podemos", o modelo
       // precisa ver a pergunta do follow-up no contexto. O corpo do template
       // aprovado é a própria MENSAGEM_RETENCAO, então vale pros dois canais.
@@ -113,7 +130,10 @@ export async function runFollowup(now = new Date()): Promise<number> {
  */
 export function scheduleFollowup(): void {
   if (process.env.FOLLOWUP_ENABLED !== 'true') {
-    console.log('[followup] desativado — ligue com FOLLOWUP_ENABLED=true quando o template Meta estiver aprovado.');
+    const porque = precisaTemplate
+      ? 'ligue com FOLLOWUP_ENABLED=true quando o template Meta estiver aprovado'
+      : 'ligue com FOLLOWUP_ENABLED=true (a Z-API não exige template) depois de combinar a cadência com a Bruna';
+    console.log(`[followup] desativado — ${porque}.`);
     return;
   }
   const run = () => runFollowup().catch((e) => console.error('[followup] ciclo falhou', e));

@@ -21,7 +21,7 @@ try {
   }
 } catch {}
 
-import { type TriagemResult } from '../src/lib/triagem';
+import { type TriagemResult, type LeadExtraido } from '../src/lib/triagem';
 import { runTriagemSemRepeticao, ehRepeticao } from '../src/lib/anti-repeat';
 import { DEFAULT_PROMPT } from '../src/lib/default-prompt';
 import { resumoDisponibilidade } from '../src/lib/agenda-core';
@@ -29,6 +29,7 @@ import { montarMarcadorComprovante, type AnaliseComprovante } from '../src/lib/c
 import { splitReply } from '../src/lib/split-message';
 import { blocoContatoDe } from '../src/lib/contato';
 import { blocoOndeParamos, type MensagemHistorico } from '../src/lib/retomada';
+import { blocoFichaDe, camposPreenchidos } from '../src/lib/ficha';
 
 // Análise de comprovante VÁLIDA (avulsa individual, chave da clínica) — os
 // cenários derivam variações dela. Usa a MESMA função da produção pra montar
@@ -504,14 +505,21 @@ async function rodarCenario(c: Cenario): Promise<boolean> {
   const fimDoHistorico = c.historico?.[c.historico.length - 1]?.at;
   let relogio = fimDoHistorico ? new Date(fimDoHistorico.getTime() + 24 * 3_600_000) : new Date();
   const turnos: Turno[] = [];
+  // ficha acumulada: em produção ela vem do banco (wa_conversations.lead, que agora
+  // MESCLA turno a turno) e vira o bloco [FICHA DO PACIENTE]. Aqui acumula do mesmo
+  // jeito, com os campos preenchidos de cada turno — sem isso o harness roda com um
+  // contexto menor que o de produção e não pegaria regressão do bloco novo.
+  let fichaAcumulada: Record<string, unknown> = {};
   for (const fala of c.falas) {
     history.push({ role: 'user', content: fala, at: relogio });
-    // espelha o computeReply: o bloco de retomada é remontado a cada turno
+    // espelha o computeReply: os blocos são remontados a cada turno
     const ondeParamos = blocoOndeParamos(history, { temNome });
+    const fichaBloco = blocoFichaDe(fichaAcumulada as Partial<LeadExtraido>);
     const res = await runTriagemSemRepeticao({
-      system: ondeParamos ? `${systemBase}\n\n${ondeParamos}` : systemBase,
+      system: [systemBase, fichaBloco, ondeParamos].filter(Boolean).join('\n\n'),
       messages: history.map(({ role, content }) => ({ role, content })),
     });
+    fichaAcumulada = { ...fichaAcumulada, ...camposPreenchidos(res.lead) };
     history.push({ role: 'assistant', content: res.resposta, at: relogio });
     // os turnos seguintes correm minuto a minuto: só a volta do paciente é que
     // tem gap de retomada, o resto da conversa é contínuo como no WhatsApp real

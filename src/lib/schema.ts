@@ -7,7 +7,9 @@ import { getPool } from './db';
  * Tabelas:
  * - wa_conversations: estado da conversa por número (ficha de triagem acumulada).
  * - wa_messages: histórico de mensagens (monta o contexto pra IA); wamid UNIQUE
- *   faz a deduplicação dos webhooks reentregues pela Meta numa só tacada.
+ *   faz a deduplicação dos webhooks reentregues numa só tacada.
+ * - wa_outbound: ids do que a gente enviou, pra distinguir o eco da própria
+ *   Camila da Bruna digitando no celular (Z-API entrega os dois como fromMe).
  * - app_config: config editável em runtime (o "raciocínio ativo" calibrado na tela
  *   e usado pelo webhook do WhatsApp).
  */
@@ -60,6 +62,20 @@ export async function initSchema(): Promise<void> {
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_wa_messages_waid_created
         ON wa_messages (wa_id, created_at);
+    `);
+
+    // Ids das mensagens que NÓS enviamos. A Z-API devolve tudo que sai do número
+    // como eco (fromMe=true), inclusive o que a própria Camila mandou — sem esta
+    // lista, cada resposta da IA pareceria "a Bruna assumiu a conversa" e
+    // pausaria o atendimento sozinha. Limpa junto com o resto no maintenance.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wa_outbound (
+        wamid       TEXT PRIMARY KEY,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_wa_outbound_created ON wa_outbound (created_at);
     `);
 
     await client.query(`

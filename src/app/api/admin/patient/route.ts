@@ -1,4 +1,5 @@
 import { isAdmin } from '@/lib/auth';
+import { resumeConversation } from '@/lib/conversation';
 import { hasDb, query } from '@/lib/db';
 import { deletePatientData } from '@/lib/maintenance';
 import { sanitizarCamposFicha } from '@/lib/ficha';
@@ -55,6 +56,39 @@ export async function GET(req: Request): Promise<Response> {
   } catch (err) {
     console.error('[admin] consulta de ficha falhou', err);
     return Response.json({ error: 'falha ao consultar' }, { status: 500 });
+  }
+}
+
+/**
+ * Devolve a conversa pra IA. Uso: POST /api/admin/patient
+ *   { "waId": "5549999999999" }
+ *
+ * Existe porque a pausa deixou de ser só o handoff final: com a Z-API, toda vez
+ * que a Bruna responde pelo celular a Camila cala a boca naquele número (senão
+ * seriam duas vozes na mesma conversa). Sem este caminho, a única saída seria
+ * UPDATE no banco — e a IA nunca mais atenderia aquele paciente.
+ */
+export async function POST(req: Request): Promise<Response> {
+  if (!isAdmin(req)) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!hasDb) return Response.json({ error: 'Sem banco configurado' }, { status: 503 });
+
+  let body: { waId?: unknown };
+  try {
+    body = (await req.json()) as { waId?: unknown };
+  } catch {
+    return Response.json({ error: 'JSON inválido' }, { status: 400 });
+  }
+  const waId = typeof body.waId === 'string' ? body.waId.replace(/\D/g, '') : '';
+  if (!waId) return Response.json({ error: 'informe waId' }, { status: 400 });
+
+  try {
+    const voltou = await resumeConversation(waId);
+    if (!voltou) return Response.json({ error: 'paciente não encontrado' }, { status: 404 });
+    console.log('[admin] conversa devolvida para a IA.');
+    return Response.json({ pausada: false });
+  } catch (err) {
+    console.error('[admin] retomada falhou', err);
+    return Response.json({ error: 'falha ao retomar' }, { status: 500 });
   }
 }
 
