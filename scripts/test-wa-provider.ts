@@ -102,10 +102,34 @@ assert.deepStrictEqual(
   [],
   'grupo é ignorado',
 );
+// Recibo de entrega: vem COM phone e messageId, mas sem conteúdo nenhum. Se
+// passar, entra no histórico como fala do paciente e a Camila responde "me
+// manda por texto" pra cada mensagem que ela própria enviou.
 assert.deepStrictEqual(
-  zapiProvider.parse(JSON.stringify({ type: 'DeliveryCallback', status: 'SENT' })),
+  zapiProvider.parse(
+    JSON.stringify({
+      type: 'DeliveryCallback',
+      phone: '5527988420050',
+      messageId: 'D1',
+      zaapId: 'Z1',
+      status: 'SENT',
+      momment: 1754300000000,
+    }),
+  ),
   [],
-  'status de entrega é ignorado',
+  'recibo de entrega é ignorado',
+);
+assert.deepStrictEqual(
+  zapiProvider.parse(
+    JSON.stringify({ type: 'MessageStatusCallback', phone: '5527988420050', ids: ['D1'], status: 'READ' }),
+  ),
+  [],
+  'mudança de status é ignorada',
+);
+assert.deepStrictEqual(
+  zapiProvider.parse(JSON.stringify({ type: 'DisconnectedCallback', connected: false })),
+  [],
+  'aviso de desconexão é ignorado',
 );
 assert.deepStrictEqual(zapiProvider.parse('não é json'), [], 'json inválido não derruba o webhook');
 assert.deepStrictEqual(

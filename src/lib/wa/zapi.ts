@@ -74,14 +74,50 @@ interface ZapiWebhook {
   sticker?: unknown;
   contact?: unknown;
   location?: unknown;
+  poll?: unknown;
+  reaction?: unknown;
+  buttonsResponseMessage?: unknown;
+  listResponseMessage?: unknown;
+  // recibo de entrega (DeliveryCallback) chega com estes — e sem conteúdo
+  zaapId?: string;
+  status?: string;
+  ids?: string[];
 }
+
+/**
+ * Blocos de conteúdo que a Z-API manda numa mensagem de verdade. A lista existe
+ * pra separar mensagem de CALLBACK: o "DeliveryCallback" (recibo de entrega)
+ * também vem com `phone` e `messageId`, e sem este filtro entraria no histórico
+ * como se fosse fala do paciente — a Camila responderia "me manda por texto" a
+ * cada recibo do que ela mesma enviou.
+ */
+const BLOCOS_DE_CONTEUDO = [
+  'text',
+  'image',
+  'audio',
+  'document',
+  'video',
+  'sticker',
+  'contact',
+  'location',
+  'poll',
+  'reaction',
+  'buttonsResponseMessage',
+  'listResponseMessage',
+] as const;
 
 /** Rótulo cru do tipo, pro histórico ("[sticker]") quando não tratamos a mídia. */
 function tipoCruDe(p: ZapiWebhook): string {
-  for (const k of ['text', 'image', 'audio', 'document', 'video', 'sticker', 'contact', 'location'] as const) {
-    if (p[k]) return k;
+  for (const k of BLOCOS_DE_CONTEUDO) {
+    if (p[k as keyof ZapiWebhook]) return k;
   }
   return p.type || 'desconhecido';
+}
+
+/** Só é mensagem se trouxe conteúdo (ou se a própria Z-API rotulou como recebida). */
+function ehMensagem(p: ZapiWebhook): boolean {
+  if (BLOCOS_DE_CONTEUDO.some((k) => p[k as keyof ZapiWebhook])) return true;
+  return p.type === 'ReceivedCallback';
 }
 
 function tipoDe(p: ZapiWebhook): TipoMensagem {
@@ -132,8 +168,10 @@ export const zapiProvider: WaProvider = {
     } catch {
       return [];
     }
-    // eventos de status/entrega/conexão não têm phone+messageId de conversa
+    // eventos de conexão/status não têm par phone+messageId...
     if (!p.phone || !p.messageId) return [];
+    // ...e o recibo de entrega tem, mas não é fala de ninguém
+    if (!ehMensagem(p)) return [];
     // grupo não é atendimento: a clínica não conversa com paciente em grupo
     if (p.isGroup) return [];
     // instância errada = chamada que não é da nossa conta
