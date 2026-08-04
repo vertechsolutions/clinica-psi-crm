@@ -60,7 +60,7 @@ criado sozinho no primeiro boot (`instrumentation.ts`).
 | `GEMINI_API_KEY` | key do Google AI Studio |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
 | `WHATSAPP_TOKEN` | token permanente (System User) do app Meta |
-| `WHATSAPP_PHONE_NUMBER_ID` | `1121282344409820` |
+| `WHATSAPP_PHONE_NUMBER_ID` | ID do número da clínica (WhatsApp Manager) — muda se o número mudar |
 | `WHATSAPP_VERIFY_TOKEN` | uma senha que você inventa (ver passo 3) |
 | `WHATSAPP_APP_SECRET` | App Dashboard → Settings → Basic → App Secret |
 | `ADMIN_API_KEY` | senha forte que você inventa (protege a tela e a exclusão de dados) |
@@ -85,7 +85,7 @@ Via CLI (opcional; dá pra fazer tudo no dashboard):
 ```bash
 railway link
 railway variables --set "RAILPACK_NODE_VERSION=22"
-railway variables --set "WHATSAPP_PHONE_NUMBER_ID=1121282344409820"
+railway variables --set "WHATSAPP_PHONE_NUMBER_ID=<id do WhatsApp Manager>"
 railway variables --set "WHATSAPP_VERIFY_TOKEN=<sua-senha>"
 # ... demais vars
 ```

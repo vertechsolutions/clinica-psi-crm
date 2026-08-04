@@ -66,6 +66,51 @@ assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '53.480.459/00
 assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '53480459000104' }, '53480459000104'), 'confere');
 assert.strictEqual(verificarDestinatario({ ...base, chaveDestino: '12.345.678/0001-99' }, PIX_CNPJ), 'nao_confere');
 
+// ── Chave MASCARADA pelo banco (o comprovante esconde parte do CNPJ) ──────────
+// Sem tolerância aqui, a Camila ACUSA o paciente de ter pago pra outro destinatário
+// (o webhook derruba o handoff e manda a mensagemAnexoInvalido). Falso positivo caro.
+const daClinica = { nomeDestinatario: 'CAZULE PSICOLOGIA LTDA' };
+
+// dígitos legíveis contíguos e contidos no CNPJ → confere (o sufixo de 8 não bate)
+assert.strictEqual(
+  verificarDestinatario({ ...base, ...daClinica, chaveDestino: '**.480.459/0001-**' }, PIX_CNPJ),
+  'confere',
+);
+// máscara no meio: dígitos não são substring, mas o titular bate → inconclusivo (equipe confere)
+assert.strictEqual(
+  verificarDestinatario({ ...base, ...daClinica, chaveDestino: '53.•••.•••/0001-04' }, PIX_CNPJ),
+  'inconclusivo',
+);
+// máscara + titular de OUTRA pessoa → segue bloqueando (dois sinais contra)
+assert.strictEqual(
+  verificarDestinatario(
+    { ...base, nomeDestinatario: 'João Silva', chaveDestino: '**.345.678/0001-**' },
+    PIX_CNPJ,
+  ),
+  'nao_confere',
+);
+// chave inteira e claramente de outro CNPJ → nao_confere mesmo com o nome da clínica
+assert.strictEqual(
+  verificarDestinatario({ ...base, ...daClinica, chaveDestino: '12.345.678/0001-99' }, PIX_CNPJ),
+  'nao_confere',
+);
+
+// ── 3º parâmetro (titular): PIX_CHAVE é só o número, o nome vive na PIX_INFO ──
+// chaveEsperada() prioriza PIX_CHAVE — sem passar a PIX_INFO, o titular some e o
+// comprovante mascarado/ilegível vira acusação ou inconclusivo à toa.
+assert.strictEqual(
+  verificarDestinatario({ ...base, ...daClinica, chaveDestino: '53.•••.•••/0001-04' }, '53480459000104', PIX_CNPJ),
+  'inconclusivo',
+);
+assert.strictEqual(
+  verificarDestinatario({ ...base, ...daClinica, chaveDestino: null }, '53480459000104', PIX_CNPJ),
+  'confere',
+);
+assert.strictEqual(
+  verificarDestinatario({ ...base, ...daClinica, chaveDestino: '**.480.459/0001-**' }, '53480459000104'),
+  'confere',
+);
+
 // Mensagem determinística do backstop: quando o webhook zera o enviarForm por
 // anexo inválido, o rascunho do modelo é descartado (prompt v18) — quem fala com
 // o paciente é este texto.

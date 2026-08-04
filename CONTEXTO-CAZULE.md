@@ -9,8 +9,12 @@ projeto e como checklist antes do deploy.
 - **Bruna** — psicóloga, atendente da recepção da Clínica Cazule (clínica de psicologia com 8 psicólogas). Cliente final.
 - **Camila** — a atendente **virtual** (IA). Nome fictício, personifica a recepção da clínica no WhatsApp.
 - **Murilo (você)** — CTO do projeto (Vertech).
-- **WhatsApp de teste** — WhatsApp Cloud API, número da clínica (`WHATSAPP_PHONE_NUMBER_ID=1121282344409820`).
-- **Notificações de handoff (fase de teste)** — devem chegar no WhatsApp da Bruna (`+55 27 98117-8233`) e no seu (`+55 49 99955-1051`).
+- **Número da clínica** — WhatsApp Cloud API. Na fase de teste foi o número de teste da Meta
+  `+55 61 94756-9216` (`WHATSAPP_PHONE_NUMBER_ID=1121282344409820`); na estreia real passa a ser o
+  **`+55 27 98842-0050`** ("Bruna Profissional" / "Bruna psicóloga - Cazule terapias") — ver
+  "Estreia real" no fim deste doc.
+- **Notificações de handoff** — chegam no WhatsApp **pessoal** da Bruna (`+55 27 98117-8233`) e no
+  seu (`+55 49 99955-1051`). O pessoal dela continua sendo o canal de aviso mesmo depois da estreia.
 
 ## Arquitetura
 
@@ -151,8 +155,8 @@ independentes (código e segurança/LGPD). Principais entregas:
 
 ## Leva 4 — Pix automático + pipeline proativo (18/07/2026, v11+v12 NO AR, commit 87be570)
 
-- **Pix automático (v11)**: env `PIX_INFO` (⚠️ TESTE: celular da Bruna +55 27 98117-8233 —
-  trocar pela chave oficial via `railway variable set PIX_INFO=...`, sem deploy). Placeholder
+- **Pix automático (v11)**: env `PIX_INFO` (na Leva 4 era o celular da Bruna, de teste; a chave
+  oficial é o CNPJ `53480459000104` — troca por `railway variables --set`, sem deploy). Placeholder
   `{PIX_INFO}` substituído em `computeReply` como o `{FORM_URL}`; sem env, fallback gracioso
   (a Camila diz que vai encaminhar e a equipe manda manualmente). A Camila envia chave+valor
   NA MESMA MENSAGEM em que o paciente escolhe avulsa/pacote e já pede o comprovante.
@@ -410,6 +414,49 @@ CONTEXTO-CAZULE.md            (este arquivo)
 - **Fila durável do webhook** — hoje é `after()` in-process; se crashar entre 200 e o envio, mensagem fica órfã.
 - **PsicoManeja** (agenda/prontuário) e confirmação de pagamento via API bancária
   (comprovantes falsos são dor real) — backlog do piloto.
+
+## Estreia real — número oficial + Pix do CNPJ (04/08/2026)
+
+A Bruna fechou os dois dados que faltavam pra sair do modo teste:
+
+- **Chave Pix oficial**: CNPJ `53480459000104` (Cazule Psicologia) — envs `PIX_INFO` + `PIX_CHAVE`.
+- **Número oficial**: `+55 27 98842-0050` ("Bruna Profissional"), no lugar do número de teste da Meta.
+- **Horário**: 24h. Nada a fazer no código — **não existe trava de horário**; a única pausa é o
+  handoff por conversa (`pausada` em `wa_conversations`).
+
+### Por que a migração do número não é só trocar uma env
+
+Registrar o número dela na Cloud API pelo caminho tradicional (verificação por SMS no WhatsApp
+Manager) **desconecta o número do app WhatsApp Business do celular da Bruna**. E o CRM **não tem
+inbox**: nenhuma rota lê ou envia mensagem fora do webhook, e despausar a IA só por SQL
+(`UPDATE wa_conversations SET pausada=FALSE WHERE wa_id='...'`). Ou seja: migrar assim deixaria o
+paciente sem ninguém do outro lado depois do handoff.
+
+Caminho escolhido: **Coexistence** (Meta, mai/2025) — o número fica no app **e** na Cloud API ao
+mesmo tempo, histórico de 180 dias sincronizado, e o que a Bruna manda pelo app espelha no webhook
+`smb_message_echoes`. Requisitos: app **WhatsApp Business** (não o comum) ≥ 2.24.17; onboarding
+pelo fluxo "conectar número existente" (código/QR dentro do app da Bruna). A doc da Meta descreve
+esse onboarding via **Embedded Signup** (perfil Tech Provider) — se o fluxo não aparecer no
+Business Manager, **não registrar o número por SMS**: as alternativas são Embedded Signup próprio,
+um BSP com coexistência, ou construir o inbox no CRM.
+
+Checklist da virada: novo Phone Number ID → `WHATSAPP_PHONE_NUMBER_ID` no Railway; número no mesmo
+WABA com o webhook assinando `messages`; **app em modo Live + Business Verification** (em modo dev
+a Cloud API só fala com 5 destinatários de teste); `NOTIFY_ALERT_NUMBERS` fica como está.
+`smb_message_echoes` **não** foi assinado — sem assinatura o webhook se comporta como hoje.
+Melhoria óbvia pra próxima leva: ao receber echo da Bruna, chamar `pauseConversation` (a IA cala a
+boca quando a humana entra na conversa antes do handoff).
+
+### Comprovante com CNPJ mascarado (corrigido junto)
+
+`verificarDestinatario` comparava só o **sufixo de 8 dígitos**. Com CNPJ, comprovante que mascara a
+chave (`**.480.459/0001-**` → dígitos `4804590001` → sufixo `04590001` ≠ `59000104`) caía em
+`nao_confere`, o backstop do webhook derrubava o handoff e a Camila **acusava o paciente** de ter
+pago pro destinatário errado. Agora: dígitos legíveis contidos na chave da clínica → `confere`;
+chave mascarada + titular batendo → `inconclusivo` (a equipe confere na mão); chave inteira e
+divergente segue `nao_confere`. O titular vem num 3º parâmetro (`process.env.PIX_INFO` no webhook)
+porque `chaveEsperada()` prioriza a `PIX_CHAVE`, que é só o número — **se setar `PIX_CHAVE`,
+mantenha o nome da clínica na `PIX_INFO`**.
 
 ## Como validar após deploy
 

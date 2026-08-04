@@ -18,36 +18,65 @@ export type VerificacaoDestinatario = 'confere' | 'nao_confere' | 'inconclusivo'
 const digitos = (s: string) => s.replace(/\D/g, '');
 const normaliza = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
+/** Sinal de que o banco escondeu parte da chave no comprovante (•••, ***, xxx, ...). */
+const MASCARADA = /[*•·#]|x{2,}|X{2,}|\.{3,}|…/;
+
+/**
+ * Nome do destinatário bate com o titular da clínica? Sinal FRACO (é OCR): só
+ * tokens de 4+ letras contam, e nunca serve sozinho pra acusar ninguém.
+ */
+function bateTitular(nomeDestinatario: string | null, ...referencias: (string | undefined)[]): boolean {
+  const nome = nomeDestinatario?.trim();
+  if (!nome) return false;
+  const alvo = normaliza(referencias.filter(Boolean).join(' '));
+  return normaliza(nome)
+    .split(/\s+/)
+    .some((p) => p.length >= 4 && alvo.includes(p));
+}
+
 /**
  * Compara o destinatário extraído do comprovante com a chave esperada da
  * clínica (texto livre da env PIX_INFO ou PIX_CHAVE). Tolerante a formatos:
  * chaves numéricas comparam pelo SUFIXO de 8+ dígitos; e-mail por containment;
  * sem chave legível, o nome do destinatário vale como sinal fraco (bate →
  * confere; não bate → inconclusivo, nunca acusa por OCR de nome).
+ *
+ * `titularRaw` (opcional) é o texto onde o NOME da clínica aparece — normalmente
+ * a PIX_INFO. Precisa vir separado porque `chaveEsperada()` prioriza a PIX_CHAVE,
+ * que é só o número: sem ele, o titular some e comprovante mascarado vira acusação.
+ *
+ * Chave MASCARADA pelo banco (`**.480.459/0001-**`) é o caso que mais dói com
+ * CNPJ: o sufixo de 8 dígitos não bate e a Camila acusaria o paciente de ter
+ * pago pro destinatário errado. Duas saídas, nessa ordem: dígitos legíveis
+ * contidos na chave da clínica → confere; senão, com o titular batendo →
+ * inconclusivo (a equipe confere na mão). Chave inteira e divergente continua
+ * `nao_confere` — a proteção contra Pix pro destinatário errado fica de pé.
  */
 export function verificarDestinatario(
   analise: AnaliseComprovante,
   esperadoRaw: string,
+  titularRaw?: string,
 ): VerificacaoDestinatario {
   const expDig = digitos(esperadoRaw);
   const chave = analise.chaveDestino?.trim() || '';
   const chaveDig = digitos(chave);
+  const titular = () => bateTitular(analise.nomeDestinatario, esperadoRaw, titularRaw);
 
-  if (chaveDig.length >= 8 && expDig.length >= 8) {
-    return chaveDig.slice(-8) === expDig.slice(-8) ? 'confere' : 'nao_confere';
+  if (chaveDig.length >= 8 && expDig.length >= 8 && chaveDig.slice(-8) === expDig.slice(-8)) {
+    return 'confere';
   }
+  // leitura parcial: os dígitos que deram pra ler são um pedaço contíguo da chave
+  if (chaveDig.length >= 6 && expDig.includes(chaveDig)) return 'confere';
   if (chave.includes('@')) {
     return normaliza(esperadoRaw).includes(normaliza(chave)) ? 'confere' : 'nao_confere';
   }
-  // sem chave comparável: tenta o nome (sinal fraco)
-  const nome = analise.nomeDestinatario?.trim();
-  if (nome) {
-    const esperadoNorm = normaliza(esperadoRaw);
-    const bateNome = normaliza(nome)
-      .split(/\s+/)
-      .some((p) => p.length >= 4 && esperadoNorm.includes(p));
-    if (bateNome) return 'confere';
+  if (chaveDig.length >= 8 && expDig.length >= 8) {
+    // dígitos suficientes e não bateram: só não acusa se a chave veio mascarada
+    // E o titular confere (dois sinais a favor).
+    return MASCARADA.test(chave) && titular() ? 'inconclusivo' : 'nao_confere';
   }
+  // sem chave comparável: tenta o nome (sinal fraco)
+  if (titular()) return 'confere';
   return 'inconclusivo';
 }
 

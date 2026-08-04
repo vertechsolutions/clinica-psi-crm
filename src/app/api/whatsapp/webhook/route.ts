@@ -113,7 +113,12 @@ async function extractText(msg: WebhookMessage): Promise<ExtractResult> {
       const media = await downloadMedia(mediaId);
       if (media) analise = await analisarComprovante(media.bytes, media.mimeType || mime);
     }
-    const verificacao = analise ? verificarDestinatario(analise, chaveEsperada()) : 'inconclusivo';
+    // PIX_INFO vai junto como titular: chaveEsperada() prioriza a PIX_CHAVE (só o
+    // número), e sem o nome da clínica um comprovante com a chave mascarada pelo
+    // banco viraria acusação de "pagou pro destinatário errado".
+    const verificacao = analise
+      ? verificarDestinatario(analise, chaveEsperada(), process.env.PIX_INFO)
+      : 'inconclusivo';
     const marca = montarMarcadorComprovante(analise, verificacao);
     const caption = (msg.image?.caption || msg.document?.caption)?.trim();
     return { texto: caption ? `${marca} Legenda: ${caption}` : marca, comprovante: { analise, verificacao } };
