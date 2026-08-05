@@ -67,6 +67,57 @@ async function main(): Promise<void> {
     console.log(`  ${mascarar(digitos)}  ${String(digitos.length).padStart(2)} dígitos  sufixo: ${sufixo}`);
   }
 
+  // ── lid: únicos x repetidos ─────────────────────────────────────────────────
+  // O import contou 389 chats entrando só pelo lid, mas apenas 331 lids únicos.
+  // Ou a paginação está devolvendo chat repetido (e o total está inflado), ou o
+  // mesmo identificador aparece em conversas diferentes. Muda o que se grava.
+  const semPhone = individuais.filter((c) => !c.phone.replace(/\D/g, ''));
+  const contagem = new Map<string, number>();
+  for (const c of individuais) {
+    if (c.lid) contagem.set(c.lid, (contagem.get(c.lid) ?? 0) + 1);
+  }
+  const repetidos = [...contagem.entries()].filter(([, n]) => n > 1);
+  console.log('\nIdentificador anônimo (lid):');
+  console.log(`  chats sem telefone:        ${semPhone.length}`);
+  console.log(`  destes, com lid:           ${semPhone.filter((c) => c.lid).length}`);
+  console.log(`  destes, SEM lid também:    ${semPhone.filter((c) => !c.lid).length}`);
+  console.log(`  chats COM telefone e lid:  ${individuais.filter((c) => c.phone.replace(/\D/g, '') && c.lid).length}`);
+  console.log(`  lids distintos no total:   ${contagem.size}`);
+  console.log(`  lids que aparecem 2+ vezes: ${repetidos.length}`);
+  if (repetidos.length) {
+    const top = repetidos.sort((a, b) => b[1] - a[1]).slice(0, 5);
+    console.log('  mais repetidos (mascarado × vezes):');
+    for (const [l, n] of top) console.log(`    ${mascarar(l)} (${l.length} díg) × ${n}`);
+  }
+
+  // chat repetido inteiro (mesma dupla phone+lid) indica paginação devolvendo duplicata
+  const assinaturas = new Set(individuais.map((c) => `${c.phone}|${c.lid}`));
+  console.log(`  chats distintos por (phone,lid): ${assinaturas.size} de ${individuais.length}`);
+
+  // ── A PERGUNTA DECISIVA ─────────────────────────────────────────────────────
+  // Um lid repetido é inofensivo se as entradas são a MESMA pessoa (uma com
+  // telefone, outra sem). É perigoso se o mesmo lid aparece com telefones
+  // DIFERENTES — aí gravá-lo calaria mais de uma pessoa, e um lead novo que
+  // colidisse ficaria mudo sem ninguém entender por quê.
+  const telefonesPorLid = new Map<string, Set<string>>();
+  for (const c of individuais) {
+    if (!c.lid) continue;
+    const tel = c.phone.replace(/\D/g, '');
+    if (!tel) continue;
+    if (!telefonesPorLid.has(c.lid)) telefonesPorLid.set(c.lid, new Set());
+    telefonesPorLid.get(c.lid)!.add(tel);
+  }
+  const colisoes = [...telefonesPorLid.entries()].filter(([, s]) => s.size > 1);
+  console.log('\n⚖️  Veredito sobre o lid:');
+  console.log(`  lids associados a algum telefone: ${telefonesPorLid.size}`);
+  console.log(`  lids com MAIS DE UM telefone:     ${colisoes.length}`);
+  if (colisoes.length === 0) {
+    console.log('  ✔ nenhum lid mistura pessoas diferentes — seguro gravar na lista');
+  } else {
+    console.log('  ✘ PERIGO: o lid não identifica uma pessoa só. NÃO gravar lid na lista.');
+    for (const [l, s] of colisoes.slice(0, 5)) console.log(`    ${mascarar(l)} → ${s.size} telefones distintos`);
+  }
+
   // ── prefixo de país dos aceitos (55 = Brasil) ───────────────────────────────
   const aceitos = individuais.filter((c) => {
     const n = c.phone.replace(/\D/g, '').length;

@@ -67,6 +67,32 @@ async function analisar(): Promise<void> {
   amostra('CHAT COM PHONE', comPhone);
   amostra('CHAT SEM PHONE', semPhone);
 
+  // ── o `lid` identifica UMA pessoa? ─────────────────────────────────────────
+  // O import viu 720 chats com lid mas só 332 valores distintos depois de
+  // normalizar pra dígitos — alguns repetindo 5 vezes. Ou o campo não é único, ou
+  // a minha normalização está colapsando valores diferentes. Gravar um id que
+  // colide calaria pessoas erradas, inclusive lead novo.
+  const comLid = pagina.filter((c) => typeof c.lid === 'string' && c.lid);
+  const crus = new Set(comLid.map((c) => String(c.lid)));
+  const normalizados = new Set(comLid.map((c) => String(c.lid).replace(/\D/g, '')));
+  console.log(`\nlid — ${comLid.length} chats na página:`);
+  console.log(`  valores CRUS distintos:        ${crus.size}`);
+  console.log(`  valores NORMALIZADOS distintos: ${normalizados.size}`);
+  if (crus.size > normalizados.size) {
+    console.log('  ⚠️ a normalização (só dígitos) está colapsando valores distintos!');
+  }
+  const formatos = new Map<string, number>();
+  for (const c of comLid) {
+    const v = String(c.lid);
+    // descreve o formato sem revelar: substitui dígito por 9 e letra por a
+    const molde = v.replace(/\d/g, '9').replace(/[A-Za-z]/g, 'a');
+    formatos.set(molde, (formatos.get(molde) ?? 0) + 1);
+  }
+  console.log('  moldes encontrados (dígito=9, letra=a):');
+  for (const [m, n] of [...formatos.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)) {
+    console.log(`    ${m}  × ${n}`);
+  }
+
   // ── algum campo dos "sem phone" parece um identificador? ────────────────────
   console.log('\nCampos dos "sem phone" que contêm dígitos (candidatos a identificador):');
   const candidatos = new Map<string, number>();
