@@ -33,9 +33,14 @@ export async function GET(req: Request): Promise<Response> {
   if (!isAdmin(req)) return naoAutorizado();
   if (!hasDb) return semBanco();
 
-  const waId = new URL(req.url).searchParams.get('waId')?.replace(/\D/g, '');
+  // `lid` = identificador de contato com número oculto (mais da metade das
+  // conversas antigas). Aceita os dois pra que "por que a Camila está muda aqui?"
+  // tenha resposta nos dois casos.
+  const p = new URL(req.url).searchParams;
+  const waId = p.get('waId')?.replace(/\D/g, '');
+  const lid = p.get('lid')?.replace(/\D/g, '');
   try {
-    if (waId) return Response.json(await consultarLegado(waId));
+    if (waId || lid) return Response.json(await consultarLegado(waId ?? '', lid));
     return Response.json(await statusLegado());
   } catch (err) {
     console.error('[admin] consulta de legado falhou', err);
@@ -133,12 +138,14 @@ export async function DELETE(req: Request): Promise<Response> {
   if (!isAdmin(req)) return naoAutorizado();
   if (!hasDb) return semBanco();
 
-  const waId = new URL(req.url).searchParams.get('waId')?.replace(/\D/g, '');
-  if (!waId) return Response.json({ error: 'informe ?waId=<numero>' }, { status: 400 });
+  const p = new URL(req.url).searchParams;
+  const waId = p.get('waId')?.replace(/\D/g, '') ?? '';
+  const lid = p.get('lid')?.replace(/\D/g, '');
+  if (!waId && !lid) return Response.json({ error: 'informe ?waId=<numero> ou ?lid=<id>' }, { status: 400 });
 
   try {
-    const saiu = await removerLegado(waId);
-    const retomada = await resumeConversation(waId).catch(() => false);
+    const saiu = await removerLegado(waId, lid);
+    const retomada = waId ? await resumeConversation(waId).catch(() => false) : false;
     console.log('[admin] conversa liberada para a IA.');
     return Response.json({ removido: saiu, retomada }, { status: saiu ? 200 : 404 });
   } catch (err) {

@@ -33,7 +33,7 @@ import {
   type AnaliseComprovante,
   type VerificacaoDestinatario,
 } from '@/lib/comprovante-core';
-import { alertarContatoAnonimo, deveIgnorarPorLegado, ehLegado, marcarLegado } from '@/lib/legado';
+import { deveIgnorarPorLegado, ehLegado, marcarLegado } from '@/lib/legado';
 import { hasDb } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -178,6 +178,9 @@ async function tratarEco(msg: MensagemRecebida): Promise<void> {
   // custo de um falso positivo aqui é a Camila emudecer sem ninguém ter assumido.
   await new Promise((r) => setTimeout(r, 2000));
   if (await foiNossoEnvio(msg.messageId)) return;
+  // Conversa antiga da equipe: nem o que a Bruna digita ali entra no nosso banco.
+  // Sem isto, marcar um número como intocável calaria só a entrada.
+  if (await ehLegado(msg.waId, msg.lid)) return;
   // conversa que a Camila nunca atendeu não é handoff: é a vida da Bruna
   if (!(await temHistorico(msg.waId))) {
     // ENQUANTO a allowlist estiver preenchida, a IA não fala com ninguém além da
@@ -190,10 +193,6 @@ async function tratarEco(msg: MensagemRecebida): Promise<void> {
     if (allowlist().length > 0) await marcarLegado(msg.waId, 'eco');
     return;
   }
-  // Número que a Camila já atendeu mas que DEPOIS foi declarado conversa da equipe
-  // (`POST /api/admin/legado`): a partir daí nem o que a Bruna digita ali entra no
-  // nosso banco. Sem isto, "marcar como intocável" calava só a entrada.
-  if (await ehLegado(msg.waId)) return;
   const texto = msg.texto || `[${msg.tipoCru} enviado pela equipe]`;
   const isNew = await recordAssistantMessage(msg.waId, texto, msg.messageId);
   if (!isNew) return; // reentrega do mesmo eco
@@ -233,27 +232,6 @@ export async function POST(req: Request): Promise<Response> {
     return new Response('ok', { status: 200 });
   }
 
-  // Contato com privacidade de número ligada: a Z-API manda um `@lid` no lugar do
-  // telefone. Nenhuma lista construída a partir de telefone reconhece essa pessoa
-  // — nem a de legado, nem a allowlist —, então não há como saber se é uma
-  // paciente que a Bruna já atende ou alguém novo. A IA não responde, e a equipe é
-  // avisada pra atender à mão: o erro de atender seria a Camila abrindo triagem
-  // (e pedindo Pix) com quem já está em tratamento.
-  if (msg.lid) {
-    console.warn(`[webhook] contato com número oculto (${mascarar(msg.waId)}) — IA silenciosa, equipe avisada.`);
-    // eco não gera alerta: é a própria Bruna falando naquela conversa
-    if (!msg.fromMe) {
-      after(async () => {
-        try {
-          await alertarContatoAnonimo(msg.waId);
-        } catch (err) {
-          console.error('[webhook] alerta de contato anônimo falhou', err);
-        }
-      });
-    }
-    return new Response('ok', { status: 200 });
-  }
-
   if (!hasDb) {
     console.warn('[webhook] mensagem recebida mas DATABASE_URL ausente — ignorada.');
     return new Response('ok', { status: 200 });
@@ -288,7 +266,7 @@ export async function POST(req: Request): Promise<Response> {
       // segurança inteira, e marcar como lida aqui a destruiria em silêncio.
       // O teste `test-webhook-http` assegura ZERO linha em wa_messages neste
       // caminho; é o que impede um refactor futuro de coletar antes de calar.
-      const silencio = await deveIgnorarPorLegado(from);
+      const silencio = await deveIgnorarPorLegado(from, msg.lid);
       if (silencio) {
         // o motivo distingue operação normal ("legado") de "a IA está calada com
         // TODO MUNDO" — que é o que a vigília depois da virada precisa enxergar

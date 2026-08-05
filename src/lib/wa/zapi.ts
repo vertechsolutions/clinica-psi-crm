@@ -258,8 +258,11 @@ export const zapiProvider: WaProvider = {
               ? { url: p.document?.documentUrl, mimeType: p.document?.mimeType }
               : undefined,
       nome: p.senderName || p.chatName || undefined,
-      // só quando o `phone` VEIO como @lid — aí o waId acima não é telefone
-      lid: /@lid/i.test(p.phone) ? p.chatLid || p.senderLid || p.phone : undefined,
+      // Sempre que vier, não só quando substitui o telefone: guardar as duas
+      // chaves dos dois lados (import e webhook) é o que faz a mesma pessoa ser
+      // reconhecida chegue ela como telefone ou como identificador anônimo.
+      lid: (p.chatLid || p.senderLid || (/@lid/i.test(p.phone) ? p.phone : ''))
+        .replace(/\D/g, '') || undefined,
       fromMe: p.fromMe === true,
       isGroup: false,
       tipoCru: tipoCruDe(p),
@@ -348,6 +351,13 @@ export async function dadosInstancia(): Promise<Record<string, unknown> | null> 
 export interface ChatBruto {
   /** só dígitos; string vazia quando o campo veio inválido */
   phone: string;
+  /**
+   * Identificador anônimo do contato (`lid`), só dígitos. Contato com privacidade
+   * de número ligada vem SEM `phone` e só com este campo — no aparelho da Bruna
+   * isso é mais da metade das conversas. A doc do `/chats` não lista o campo, mas
+   * a API devolve.
+   */
+  lid: string;
   isGroup: boolean;
   /** o chat veio sem `lastMessageTime` (só entra no relatório do import) */
   semData: boolean;
@@ -371,10 +381,10 @@ interface OpcoesColeta {
  *  aqui, na fronteira: o resto do sistema nunca chega a ver esses campos. */
 function reduzir(item: unknown): ChatBruto {
   const c = (item ?? {}) as Record<string, unknown>;
-  const bruto = typeof c.phone === 'string' ? c.phone : '';
   const t = c.lastMessageTime;
   return {
-    phone: bruto,
+    phone: typeof c.phone === 'string' ? c.phone : '',
+    lid: typeof c.lid === 'string' ? c.lid.replace(/\D/g, '') : '',
     isGroup: c.isGroup === true || c.isGroup === 'true',
     semData: t == null || t === '' || t === 0 || t === '0',
   };

@@ -16,7 +16,13 @@
  * desconhecido, atende (senão o produto não existe).
  */
 import { query } from './db';
-import { ehProtegido, hashesDe, impressaoDigital, type OrigemLegado } from './legado-core';
+import {
+  ehProtegido,
+  hashesDe,
+  hashLid,
+  impressaoDigital,
+  type OrigemLegado,
+} from './legado-core';
 
 const CHAVE = process.env.WA_LEGADO_CHAVE || '';
 
@@ -107,22 +113,18 @@ async function alertarConfig(motivo: string): Promise<void> {
   );
 }
 
+
 /**
- * Contato com privacidade de número ligada: a Z-API entrega um identificador
- * anônimo (`@lid`) no lugar do telefone, e nenhuma lista baseada em telefone o
- * reconhece. Como não dá pra saber se é uma paciente antiga da Bruna ou um lead
- * novo, a IA não responde — mas alguém precisa saber que a pessoa escreveu, senão
- * o silêncio vira um lead (ou um paciente) perdido sem ninguém notar.
+ * Os hashes pelos quais uma pessoa pode ser reconhecida: as duas grafias do
+ * telefone e, quando o contato oculta o número, o LID. Guardar e consultar os dois
+ * é o que faz o filtro alcançar as conversas que chegam sem telefone — mais da
+ * metade das antigas, no aparelho da Bruna.
  */
-export async function alertarContatoAnonimo(waId: string): Promise<void> {
-  await alertarEquipe(
-    `lid:${waId}`,
-    '🔒 *Mensagem de contato com número oculto*\n\n' +
-      'Alguém com a privacidade de número ativada no WhatsApp escreveu para a clínica. ' +
-      'A Camila **não** respondeu: sem o telefone, ela não tem como saber se é um paciente ' +
-      'que já está em atendimento ou alguém novo.\n\n' +
-      'Dá uma olhada no WhatsApp e responde por lá. 💙',
-  );
+function chavesDe(waId: string, lid?: string): string[] {
+  const out = waId ? hashesDe(waId, CHAVE) : [];
+  const l = (lid ?? '').replace(/\D/g, '');
+  if (l.length >= 10) out.push(hashLid(l, CHAVE));
+  return out;
 }
 
 // ─────────────────────────────── consultas ───────────────────────────────
@@ -137,11 +139,11 @@ export async function alertarContatoAnonimo(waId: string): Promise<void> {
  * `recordUserMessage` já lançava e o turno morria antes de qualquer envio. A
  * exceção é a tabela ainda não existir (schema não rodou), aí segue como hoje.
  */
-export async function ehLegado(waId: string): Promise<boolean> {
+export async function ehLegado(waId: string, lid?: string): Promise<boolean> {
   try {
     const res = await query(
       `UPDATE wa_legado SET tentativas = tentativas + 1 WHERE chave_hash = ANY($1::text[])`,
-      [hashesDe(waId, CHAVE)],
+      [chavesDe(waId, lid)],
     );
     return (res.rowCount ?? 0) > 0;
   } catch (e) {
@@ -174,7 +176,10 @@ export type MotivoSilencio = 'legado' | 'botao-vermelho' | 'sem-snapshot' | 'cha
  *
  * `null` = pode atender.
  */
-export async function deveIgnorarPorLegado(waId: string): Promise<MotivoSilencio | null> {
+export async function deveIgnorarPorLegado(
+  waId: string,
+  lid?: string,
+): Promise<MotivoSilencio | null> {
   if (ehProtegido(waId, process.env)) return null;
 
   const estado = await lerEstado();
@@ -188,18 +193,17 @@ export async function deveIgnorarPorLegado(waId: string): Promise<MotivoSilencio
     await alertarConfig('WA_LEGADO_CHAVE não confere com a que gerou a lista de conversas antigas.');
     return 'chave-divergente';
   }
-  return (await ehLegado(waId)) ? 'legado' : null;
+  return (await ehLegado(waId, lid)) ? 'legado' : null;
 }
 
 /** Diagnóstico ("por que a Camila está muda aqui?") — não mexe no contador. */
-export async function consultarLegado(waId: string): Promise<{
-  legado: boolean;
-  origem?: OrigemLegado;
-  tentativas?: number;
-}> {
+export async function consultarLegado(
+  waId: string,
+  lid?: string,
+): Promise<{ legado: boolean; origem?: OrigemLegado; tentativas?: number }> {
   const { rows } = await query<{ origem: OrigemLegado; tentativas: number }>(
     `SELECT origem, tentativas FROM wa_legado WHERE chave_hash = ANY($1::text[]) LIMIT 1`,
-    [hashesDe(waId, CHAVE)],
+    [chavesDe(waId, lid)],
   );
   const r = rows[0];
   return r ? { legado: true, origem: r.origem, tentativas: r.tentativas } : { legado: false };
@@ -255,9 +259,21 @@ export async function classificarNovos(
   return { novos, jaNaLista: telefones.length - novos.length };
 }
 
-/** Insere em lote. Devolve quantas linhas eram novas (idempotente). */
-export async function marcarLegadoEmLote(telefones: string[], origem: OrigemLegado): Promise<number> {
-  const hashes = [...new Set(telefones.flatMap((t) => hashesDe(t, CHAVE)))];
+/**
+ * Insere em lote. Devolve quantas linhas eram novas (idempotente).
+ * `lids` entram com hash de namespace próprio (não são telefone).
+ */
+export async function marcarLegadoEmLote(
+  telefones: string[],
+  origem: OrigemLegado,
+  lids: string[] = [],
+): Promise<number> {
+  const hashes = [
+    ...new Set([
+      ...telefones.flatMap((t) => hashesDe(t, CHAVE)),
+      ...lids.map((l) => hashLid(l, CHAVE)),
+    ]),
+  ];
   if (hashes.length === 0) return 0;
   const res = await query(
     `INSERT INTO wa_legado (chave_hash, origem)
@@ -269,9 +285,9 @@ export async function marcarLegadoEmLote(telefones: string[], origem: OrigemLega
 }
 
 /** Tira o número da lista — "essa conversa agora é da Camila". */
-export async function removerLegado(waId: string): Promise<boolean> {
+export async function removerLegado(waId: string, lid?: string): Promise<boolean> {
   const res = await query(`DELETE FROM wa_legado WHERE chave_hash = ANY($1::text[])`, [
-    hashesDe(waId, CHAVE),
+    chavesDe(waId, lid),
   ]);
   return (res.rowCount ?? 0) > 0;
 }

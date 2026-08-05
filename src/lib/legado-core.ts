@@ -59,6 +59,15 @@ export function hashesDe(waId: string, chave: string): string[] {
 }
 
 /**
+ * Hash de um LID. Namespace separado do telefone de propósito: um LID é só uma
+ * sequência longa de dígitos, e sem o prefixo um LID que por acaso coincidisse
+ * com um telefone calaria a pessoa errada.
+ */
+export function hashLid(lid: string, chave: string): string {
+  return crypto.createHmac('sha256', chave).update(`lid:${digitos(lid)}`).digest('hex');
+}
+
+/**
  * Impressão digital da chave, gravada junto do snapshot. O gate compara antes de
  * confiar na tabela: se alguém trocar a `WA_LEGADO_CHAVE`, os hashes viram lixo e
  * a lista inteira deixaria de casar — sem isso, o efeito seria a Camila voltar a
@@ -101,23 +110,46 @@ export function ehProtegido(waId: string, env: NodeJS.ProcessEnv): boolean {
 /** O mínimo que a coleta precisa expor — `name` e `notes` nunca chegam aqui. */
 export interface ChatMinimo {
   phone: string;
+  /** identificador anônimo, quando o contato oculta o número (só dígitos) */
+  lid?: string;
   isGroup: boolean;
 }
 
+export interface IdentificadoresDoLegado {
+  /** telefones (viram hash com as duas grafias do 9º dígito) */
+  telefones: string[];
+  /** LIDs de contatos com número oculto (hash direto — não é telefone) */
+  lids: string[];
+  grupos: number;
+  /** nem telefone nem lid utilizável */
+  invalidos: number;
+  protegidos: number;
+  /** quantos entraram SÓ pelo lid (não tinham telefone) */
+  somenteLid: number;
+}
+
+/** Um LID é uma sequência longa de dígitos — não tem DDI, DDD nem 9º dígito. */
+const lidValido = (s: string): boolean => s.length >= 10 && s.length <= 25;
+
 /**
- * Telefones de uma coleta que devem virar linha na lista: descarta grupo, número
- * inválido e a equipe. Devolve só dígitos — nome, anotação e data ficaram para
- * trás na fronteira do provider.
+ * O que de uma coleta deve virar linha na lista, separado por tipo de
+ * identificador. Descarta grupo e a equipe.
+ *
+ * O `lid` importa mais do que parece: no aparelho da Bruna, **mais da metade** das
+ * conversas vem sem `phone`, só com `lid` — é o contato que ligou a privacidade de
+ * número. Ignorá-los deixaria metade dos pacientes antigos desprotegidos.
  */
-export function telefonesParaLegado(
+export function identificadoresParaLegado(
   chats: ChatMinimo[],
   env: NodeJS.ProcessEnv,
-): { telefones: string[]; grupos: number; invalidos: number; protegidos: number } {
+): IdentificadoresDoLegado {
   const lista = protegidos(env);
   const telefones = new Set<string>();
+  const lids = new Set<string>();
   let grupos = 0;
   let invalidos = 0;
   let daEquipe = 0;
+  let somenteLid = 0;
 
   for (const c of chats) {
     if (c.isGroup) {
@@ -125,15 +157,36 @@ export function telefonesParaLegado(
       continue;
     }
     const n = digitos(c.phone);
-    if (n.length < 10 || n.length > 15) {
-      invalidos++;
-      continue;
-    }
-    if (lista.length && chavesEquivalentes(n).some((v) => lista.includes(v))) {
+    const l = digitos(c.lid ?? '');
+    const temTelefone = n.length >= 10 && n.length <= 15;
+
+    // a equipe é reconhecida pelo telefone; sem ele não há como saber que é ela,
+    // mas também não há risco — a equipe não conversa com a clínica por número oculto
+    if (temTelefone && lista.length && chavesEquivalentes(n).some((v) => lista.includes(v))) {
       daEquipe++;
       continue;
     }
-    telefones.add(n);
+
+    let entrou = false;
+    if (temTelefone) {
+      telefones.add(n);
+      entrou = true;
+    }
+    // guarda o lid TAMBÉM quando há telefone: a mesma pessoa pode chegar de um
+    // jeito no import e de outro no webhook
+    if (lidValido(l)) {
+      lids.add(l);
+      if (!temTelefone) somenteLid++;
+      entrou = true;
+    }
+    if (!entrou) invalidos++;
   }
-  return { telefones: [...telefones], grupos, invalidos, protegidos: daEquipe };
+  return {
+    telefones: [...telefones],
+    lids: [...lids],
+    grupos,
+    invalidos,
+    protegidos: daEquipe,
+    somenteLid,
+  };
 }

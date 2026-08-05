@@ -12,9 +12,10 @@ import {
   ehProtegido,
   hashChave,
   hashesDe,
+  hashLid,
+  identificadoresParaLegado,
   impressaoDigital,
   protegidos,
-  telefonesParaLegado,
 } from '../src/lib/legado-core';
 import { ehConversaIndividual, normalizarWaId } from '../src/lib/wa/types';
 
@@ -87,21 +88,37 @@ const CHAVE = 'chave-de-teste-bem-comprida';
   assert.ok(!ehProtegido('5549999551051', {} as NodeJS.ProcessEnv), 'sem env, ninguém é protegido');
 }
 
+// ── contato com número oculto (lid) ───────────────────────────────────────────
+// Mais da METADE das conversas antigas da Bruna chega sem `phone`, só com `lid`.
+// Ignorá-las deixaria metade dos pacientes antigos desprotegidos.
+{
+  const a = hashLid('999999999999999', CHAVE);
+  assert.strictEqual(a, hashLid('999999999999999@lid', CHAVE), 'normaliza o sufixo @lid');
+  assert.notStrictEqual(a, hashChave('999999999999999', CHAVE),
+    'lid e telefone vivem em namespaces separados — um lid que coincida com um telefone não pode calar a pessoa errada');
+  assert.notStrictEqual(a, hashLid('999999999999999', 'outra'));
+}
+
 // ── o que vira linha na lista ─────────────────────────────────────────────────
 {
   const env = { NOTIFY_ALERT_NUMBERS: '5549999551051' } as unknown as NodeJS.ProcessEnv;
-  const r = telefonesParaLegado(
+  const r = identificadoresParaLegado(
     [
       { phone: '5527999990001', isGroup: false },
       { phone: '5527999990001', isGroup: false }, // repetido
       { phone: '120363019502650977', isGroup: true }, // grupo
-      { phone: '', isGroup: false }, // status/broadcast já esvaziado
+      { phone: '', lid: '888888888888888', isGroup: false }, // número oculto: entra pelo lid
+      { phone: '5527999990003', lid: '777777777777777', isGroup: false }, // tem os dois
+      { phone: '', isGroup: false }, // sem nada aproveitável
       { phone: '123', isGroup: false }, // curto demais
       { phone: '5549999551051', isGroup: false }, // equipe
     ],
     env,
   );
-  assert.deepStrictEqual(r.telefones, ['5527999990001'], 'só o chat individual válido de terceiro');
+  assert.deepStrictEqual(r.telefones.sort(), ['5527999990001', '5527999990003'].sort());
+  assert.deepStrictEqual(r.lids.sort(), ['777777777777777', '888888888888888'].sort(),
+    'guarda o lid mesmo quando há telefone — a pessoa pode chegar de um jeito no import e de outro no webhook');
+  assert.strictEqual(r.somenteLid, 1, 'só o que não tinha telefone conta como "só lid"');
   assert.strictEqual(r.grupos, 1);
   assert.strictEqual(r.invalidos, 2);
   assert.strictEqual(r.protegidos, 1);
@@ -111,12 +128,15 @@ const CHAVE = 'chave-de-teste-bem-comprida';
 // Assert sobre as chaves INTEIRAS: um `...resto` num spread do provider passaria
 // despercebido num teste que só checasse a ausência de `name`.
 {
-  const r = telefonesParaLegado(
+  const r = identificadoresParaLegado(
     [{ phone: '5527999990002', isGroup: false }],
     {} as NodeJS.ProcessEnv,
   );
-  assert.deepStrictEqual(Object.keys(r).sort(), ['grupos', 'invalidos', 'protegidos', 'telefones'].sort(),
-    'o resultado é só contagem + telefones — nada de nome, anotação ou data');
+  assert.deepStrictEqual(
+    Object.keys(r).sort(),
+    ['grupos', 'invalidos', 'lids', 'protegidos', 'somenteLid', 'telefones'].sort(),
+    'o resultado é só contagem + identificadores — nada de nome, anotação ou data',
+  );
   assert.deepStrictEqual(r.telefones, ['5527999990002']);
 }
 

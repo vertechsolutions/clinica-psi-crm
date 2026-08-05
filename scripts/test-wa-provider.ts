@@ -156,9 +156,10 @@ assert.deepStrictEqual(
   'telefone curto demais não é gente',
 );
 
-// @lid: o contato ligou a privacidade de número, e o "telefone" que chega é um
-// identificador anônimo. Passa (a decisão é atender em caso de dúvida), mas fica
-// registrado — nenhuma lista construída a partir de telefone reconhece essa pessoa.
+// Contato que ligou a privacidade de número: o "telefone" que chega é um
+// identificador anônimo. Mais da METADE das conversas antigas da Bruna é assim, e
+// a lista de legado guarda o lid junto — por isso ele precisa sobreviver ao parse,
+// normalizado em dígitos pra casar com o que veio do /chats.
 const comLid = zapiProvider.parse(
   JSON.stringify({
     phone: '999999999999999@lid',
@@ -168,11 +169,25 @@ const comLid = zapiProvider.parse(
   }),
 )[0];
 assert.strictEqual(comLid.waId, '999999999999999');
-assert.strictEqual(comLid.lid, '999999999999999@lid', 'o @lid é preservado pro webhook avisar');
-const semLid = zapiProvider.parse(
-  JSON.stringify({ phone: '5527988420050', messageId: 'L2', senderLid: '888@lid', text: { message: 'oi' } }),
+assert.strictEqual(comLid.lid, '999999999999999', 'lid preservado e normalizado');
+
+// com telefone E lid: guarda os dois, porque a mesma pessoa pode ter entrado na
+// lista por um deles e chegar aqui pelo outro
+const ambos = zapiProvider.parse(
+  JSON.stringify({
+    phone: '5527988420050',
+    messageId: 'L2',
+    senderLid: '888888888888@lid',
+    text: { message: 'oi' },
+  }),
 )[0];
-assert.strictEqual(semLid.lid, undefined, 'telefone de verdade não vira caso de @lid');
+assert.strictEqual(ambos.waId, '5527988420050');
+assert.strictEqual(ambos.lid, '888888888888');
+
+const semLid = zapiProvider.parse(
+  JSON.stringify({ phone: '5527988420050', messageId: 'L3', text: { message: 'oi' } }),
+)[0];
+assert.strictEqual(semLid.lid, undefined, 'sem lid no payload, sem lid na mensagem');
 assert.deepStrictEqual(
   zapiProvider.parse(JSON.stringify({ phone: '55279', messageId: 'X', instanceId: 'OUTRA', text: { message: 'oi' } })),
   [],

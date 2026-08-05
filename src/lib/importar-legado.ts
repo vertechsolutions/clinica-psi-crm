@@ -8,7 +8,7 @@
  * scrollback de terminal com a agenda dela. O relatório é só agregado.
  */
 import { coletarChats, coletarContatos, type Coleta } from './wa/zapi';
-import { telefonesParaLegado } from './legado-core';
+import { identificadoresParaLegado } from './legado-core';
 import {
   classificarNovos,
   jaAtendidosPelaCamila,
@@ -27,7 +27,12 @@ export interface ResultadoImport {
   daEquipe: number;
   /** chats que a própria Camila já atendeu — excluídos da lista */
   daCamila: number;
+  /** telefones que entram na lista */
   candidatos: number;
+  /** identificadores anônimos (contato com número oculto) que entram na lista */
+  lids: number;
+  /** destes, quantos NÃO tinham telefone — só existem pelo lid */
+  somenteLid: number;
   novos: number;
   jaNaLista: number;
   semData: number;
@@ -59,6 +64,8 @@ const vazio = (): ResultadoImport => ({
   daEquipe: 0,
   daCamila: 0,
   candidatos: 0,
+  lids: 0,
+  somenteLid: 0,
   novos: 0,
   jaNaLista: 0,
   semData: 0,
@@ -82,10 +89,12 @@ export async function importarLegado(opts: OpcoesImport = {}): Promise<Resultado
   const chats = [...deChats.chats, ...deContatos.chats];
   const {
     telefones: candidatos,
+    lids,
     grupos,
     invalidos,
     protegidos: daEquipe,
-  } = telefonesParaLegado(chats, process.env);
+    somenteLid,
+  } = identificadoresParaLegado(chats, process.env);
 
   // Paciente da própria Camila nunca vira "conversa antiga da Bruna". Antes da
   // virada isso não tira ninguém; depois dela, é o que impede uma reconciliação
@@ -106,6 +115,8 @@ export async function importarLegado(opts: OpcoesImport = {}): Promise<Resultado
     daEquipe,
     daCamila: daCamila.size,
     candidatos: telefones.length,
+    lids: lids.length,
+    somenteLid,
     novos: 0,
     jaNaLista: 0,
     semData,
@@ -130,8 +141,9 @@ export async function importarLegado(opts: OpcoesImport = {}): Promise<Resultado
   // É o que impede gravar em cima de um aparelho que ainda estava sincronizando —
   // o passo mais fácil de pular quando o primeiro número "parece razoável".
   if (opts.esperado != null) {
+    const total = telefones.length + lids.length;
     const tol = opts.tolerancia ?? 0.05;
-    const delta = Math.abs(telefones.length - opts.esperado);
+    const delta = Math.abs(total - opts.esperado);
     const limite = Math.max(5, Math.round(opts.esperado * tol));
     if (delta > limite) {
       return {
@@ -141,12 +153,12 @@ export async function importarLegado(opts: OpcoesImport = {}): Promise<Resultado
     }
   }
 
-  // chats e contatos entram no mesmo lote: uma linha por número, e a distinção de
-  // origem só serviria pra diagnóstico — não muda decisão nenhuma.
-  const inseridos = await marcarLegadoEmLote(telefones, 'snapshot');
-  await registrarSnapshot(telefones.length);
+  // chats e contatos entram no mesmo lote: uma linha por identificador, e a
+  // distinção de origem só serviria pra diagnóstico — não muda decisão nenhuma.
+  const inseridos = await marcarLegadoEmLote(telefones, 'snapshot', lids);
+  await registrarSnapshot(telefones.length + lids.length);
   console.log(
-    `[legado] import concluído: ${telefones.length} números na lista (${inseridos} linhas novas, ${base.paginas} páginas).`,
+    `[legado] import concluído: ${telefones.length} números + ${lids.length} contatos anônimos (${inseridos} linhas novas, ${base.paginas} páginas).`,
   );
   return { ...base, gravado: true };
 }

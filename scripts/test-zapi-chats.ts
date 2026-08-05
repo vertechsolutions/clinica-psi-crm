@@ -82,9 +82,27 @@ async function main() {
   // nome e anotação morrem na fronteira do provider: o resto do sistema nunca vê
   assert.deepStrictEqual(
     Object.keys(r.chats[0]).sort(),
-    ['isGroup', 'phone', 'semData'].sort(),
-    'o chat reduzido só tem telefone, se é grupo e se veio sem data',
+    ['isGroup', 'lid', 'phone', 'semData'].sort(),
+    'o chat reduzido só tem identificador, se é grupo e se veio sem data',
   );
+
+  // ── contato com número oculto: vem SEM phone, só com lid ───────────────────
+  // No aparelho da Bruna isso é mais da metade das conversas. A doc do /chats não
+  // lista o campo `lid`, mas a API devolve — e sem ele metade dos pacientes
+  // antigos ficaria de fora da lista.
+  instalarFetchFalso();
+  respostas.push({
+    json: [
+      { ...chat(''), lid: '888888888888888@lid', phone: undefined },
+      { ...chat('5527999990001'), lid: '777777777777777@lid' },
+    ],
+  });
+  respostas.push({ json: [] });
+  r = await coletarChats({ pageSize: 100 });
+  assert.strictEqual(r.chats[0].phone, '', 'contato oculto não tem telefone');
+  assert.strictEqual(r.chats[0].lid, '888888888888888', 'mas tem lid, já normalizado pra dígitos');
+  assert.strictEqual(r.chats[1].phone, '5527999990001');
+  assert.strictEqual(r.chats[1].lid, '777777777777777', 'quem tem os dois preserva os dois');
 
   // ── paginação: NUNCA parar por página curta ─────────────────────────────────
   // A doc não fixa teto de pageSize. Se a API devolver 50 pra um pedido de 100,
