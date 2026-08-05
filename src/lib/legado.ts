@@ -17,6 +17,7 @@
  */
 import { query } from './db';
 import {
+  chavesEquivalentes,
   ehProtegido,
   hashesDe,
   hashLid,
@@ -230,13 +231,40 @@ export async function marcarLegado(waId: string, origem: OrigemLegado): Promise<
  */
 export async function jaAtendidosPelaCamila(telefones: string[]): Promise<Set<string>> {
   if (telefones.length === 0) return new Set();
+  // Compara pelas DUAS grafias do 9º dígito. Comparar exato não bastava: o banco
+  // guarda o número na forma que a Z-API entregou no primeiro contato, e o
+  // `/chats` pode devolver a outra — foi exatamente o que aconteceu com o número
+  // do Murilo (banco 554999551051, 12 dígitos). Um paciente da Camila que caísse
+  // nessa divergência entraria na lista e emudeceria sem deixar rastro.
+  const variantes = [...new Set(telefones.flatMap(chavesEquivalentes))];
   const { rows } = await query<{ wa_id: string }>(
     `SELECT DISTINCT wa_id FROM wa_messages WHERE wa_id = ANY($1::text[])
      UNION
      SELECT wa_id FROM wa_conversations WHERE wa_id = ANY($1::text[])`,
-    [telefones],
+    [variantes],
   );
-  return new Set(rows.map((r) => r.wa_id));
+  // devolve na grafia do CHAMADOR (a do /chats), senão o filtro do import não casa
+  const achados = new Set(rows.map((r) => r.wa_id));
+  return new Set(telefones.filter((t) => chavesEquivalentes(t).some((v) => achados.has(v))));
+}
+
+/**
+ * Tira da lista de legado quem a Camila atende (nas duas grafias). É o conserto
+ * para um import que tenha marcado paciente da IA por engano — e a garantia de
+ * que uma reconciliação futura não emudece quem ela conquistou.
+ */
+export async function repararPacientesDaCamila(): Promise<{ conferidos: number; liberados: number }> {
+  const { rows } = await query<{ wa_id: string }>(
+    `SELECT DISTINCT wa_id FROM wa_conversations
+     UNION
+     SELECT DISTINCT wa_id FROM wa_messages`,
+  );
+  let liberados = 0;
+  for (const { wa_id } of rows) {
+    if (await removerLegado(wa_id)) liberados++;
+  }
+  if (liberados) console.log(`[legado] reparo: ${liberados} paciente(s) da Camila retirado(s) da lista.`);
+  return { conferidos: rows.length, liberados };
 }
 
 /**

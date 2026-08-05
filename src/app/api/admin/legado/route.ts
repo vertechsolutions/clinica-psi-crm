@@ -6,6 +6,7 @@ import {
   consultarLegado,
   marcarLegado,
   removerLegado,
+  repararPacientesDaCamila,
   setCamilaMuda,
   statusLegado,
 } from '@/lib/legado';
@@ -66,6 +67,17 @@ export async function POST(req: Request): Promise<Response> {
     body = (await req.json()) as typeof body;
   } catch {
     return Response.json({ error: 'JSON inválido' }, { status: 400 });
+  }
+
+  // Conserto: tira da lista quem a Camila atende. Idempotente e seguro de rodar
+  // a qualquer momento — em especial depois de um import.
+  if (body.acao === 'reparar') {
+    try {
+      return Response.json(await repararPacientesDaCamila());
+    } catch (err) {
+      console.error('[admin] reparo do legado falhou', err);
+      return Response.json({ error: 'falha ao reparar' }, { status: 500 });
+    }
   }
 
   if (body.acao === 'importar') {
