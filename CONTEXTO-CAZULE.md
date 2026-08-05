@@ -490,6 +490,58 @@ divergente segue `nao_confere`. O titular vem num 3º parâmetro (`process.env.P
 porque `chaveEsperada()` prioriza a `PIX_CHAVE`, que é só o número — **se setar `PIX_CHAVE`,
 mantenha o nome da clínica na `PIX_INFO`**.
 
+### Code-review da migração (04/08/2026, commit `400279e`)
+
+Cinco revisões independentes sobre `abce334..HEAD`. Dois achados críticos **do código
+do mesmo dia**, corrigidos antes da estreia:
+
+1. **Comprovante de terceiro passava por coincidência de dígitos.** A tolerância a chave
+   mascarada aceitava qualquer `chaveDig` de 6+ dígitos contida na chave da clínica —
+   e `34804590` está dentro de `53480459000104`. Um Pix feito pra outra conta, com a
+   chave inteira e legível, virava `confere` e liberava o handoff. Agora exige um
+   segundo sinal (máscara visível **ou** titular batendo); coincidência sozinha vira
+   `inconclusivo`.
+2. **O eco `fromMe` pausava a IA em qualquer número.** Como o transporte é o WhatsApp
+   pessoal-profissional da Bruna, toda mensagem dela pra um contato qualquer criaria
+   uma conversa `pausada` no banco; se essa pessoa procurasse a clínica depois, a
+   Camila ficaria muda pra ela e ninguém saberia (o lead sumia em silêncio). Agora o
+   `tratarEco` exige `temHistorico(waId)` — conversa que a Camila nunca atendeu é
+   ignorada por completo, e conversa pessoal de terceiro deixa de ser gravada.
+
+Também: os dois `console.log` que ainda levavam o telefone inteiro passaram a mascarar.
+
+**Backlog que o review levantou** (pré-existente ou operacional, não bloqueia a estreia):
+
+- `findColdLeads` (`followup.ts`) filtra `pronto = FALSE`, e `pronto` é monotônico — o
+  lead que disse "quero agendar" e sumiu antes de pagar **nunca** é reengajado. É
+  exatamente o caso que o goal 3 queria pegar.
+- Dois `after()` do mesmo `waId` não são serializados: duas mensagens em sequência
+  rápida podem gerar respostas fora de contexto e `notifyTeam` duplicado.
+- O `after()` do webhook faz trabalho longo (Gemini + envio). Se o Railway mandar
+  SIGTERM com drain curto, a mensagem do paciente morre no meio do deploy. A doc do
+  Next 16 recomenda 10-30s de drain (`node_modules/next/dist/docs/01-app/02-guides/self-hosting.md`).
+- Segredo do webhook em query string é mais fraco que o HMAC da Meta (o segredo vai
+  inteiro em toda chamada e pode parar em log de proxy). Mitigação: usar só o header
+  `x-webhook-secret`, que o código já aceita.
+- `src/app/webhook/route.ts` re-exporta `runtime`/`dynamic`, e o analisador estático do
+  Next não enxerga valor vindo de re-export — hoje é inofensivo (o default é o mesmo),
+  mas silencia config futura.
+
+### Suíte de testes (04/08/2026)
+
+`npm test` roda as 13 suítes puras de uma vez (antes eram 13 comandos que ninguém
+digitava inteiros). `tsx` virou devDependency — antes todo `npx tsx` baixava o pacote.
+
+| Script | Cobre | Precisa de |
+|---|---|---|
+| `scripts/test-wa-provider.ts` | autenticação do webhook + parse dos dois providers | nada |
+| `scripts/test-wa-envio.ts` | envio, mídia e bolhas com `fetch` falso; `onSent` por bolha | nada |
+| `scripts/test-db-live.ts` (`npm run test:db`) | dedup, `wa_outbound`, merge da ficha, pausa/retomada, retenção | `TEST_DATABASE_URL` |
+| `scripts/test-webhook-http.ts` (`npm run test:webhook`) | orquestração real: 401, allowlist, dedup, eco próprio vs. humano | `TEST_DATABASE_URL` |
+
+O banco de teste é um serviço Postgres **separado** no Railway (`Postgres-2VRW`), com
+TCP proxy ligado; `test-db-live` recusa rodar se a URL for a mesma do app.
+
 ## Como validar após deploy
 
 1. Sanity build local: `pnpm build` — 0 erros de tipagem.
