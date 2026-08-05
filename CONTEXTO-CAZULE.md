@@ -585,6 +585,46 @@ Dois números que o diagnóstico revelou e que mudaram o desenho:
    ciclo filtra o legado (e aborta o ciclo se não conseguir checar — mensagem proativa pro
    número errado não tem desfazer).
 
+### A virada, e o que a realidade corrigiu no desenho (05/08/2026)
+
+Três premissas caíram no dia da execução — todas descobertas por medir antes de gravar.
+
+**1. Metade das conversas não tem telefone.** O import a seco descartou 389 dos 732 chats como
+inválidos. Não era lixo: vêm com `phone` VAZIO e um campo **`lid`** no lugar — contatos que
+ligaram a privacidade de número. A doc do `/chats` não lista esse campo, mas a API devolve (95
+dos 100 chats da 1ª página). Sem tratá-lo, a lista sairia com 329 números em vez de ~660 e
+**metade dos pacientes antigos ficaria desprotegida**. Antes de gravar, uma checagem decidiu se
+o lid era seguro: quantos telefones DISTINTOS cada lid tem associado. Resposta: 331 lids ligados
+a telefone, **zero com mais de um** — as repetições são a mesma pessoa em entradas diferentes do
+aparelho. `hashLid` usa namespace próprio (prefixo `lid:`) pra que um lid que coincida com um
+telefone não cale a pessoa errada.
+
+**2. O aparelho não tem 720 conversas, tem ~330 pessoas.** 331 dos 332 lids têm telefone
+correspondente: cada contato aparece em várias entradas. É esse o número a conferir com a Bruna.
+
+**3. O 9º dígito diverge de verdade — confirmado, não mais hipótese.** O `wa_id` do Murilo no
+banco é `554999551051` (12 dígitos, SEM o 9), enquanto o número dele tem 13. Era o risco
+registrado em "wa_id pode divergir" e nunca verificado. Duas consequências: `chavesEquivalentes`
+(as duas grafias) deixou de ser precaução e virou requisito; e `jaAtendidosPelaCamila`, que
+comparava número exato, foi corrigida — um paciente da IA nessa divergência entraria na lista e
+ficaria mudo **sem deixar rastro** (o gate retorna antes de gravar). `POST /api/admin/legado
+{"acao":"reparar"}` varre o banco e tira da lista quem a Camila atende; rodou e deu
+`{conferidos: 5, liberados: 0}`.
+
+**Resultado da virada** (05/08, ~20h): lista com **973 hashes** (329 telefones nas duas grafias
++ 331 lids), `WA_ALLOWLIST` esvaziada. Nas primeiras horas, **9 contatos antigos escreveram 29
+mensagens e nenhuma foi gravada, transcrita ou respondida** — enquanto as 21 mensagens gravadas
+na janela eram todas de uma conversa nova de teste, que fechou a triagem em 8 minutos. É o teste
+do bloqueio feito com tráfego real, sem incomodar paciente nenhum.
+
+Ficou faltando um teste controlado com um terceiro número (marcar → confirmar silêncio →
+desmarcar → confirmar atendimento), que é o único que escolhe o resultado esperado antes.
+
+**`GET /api/admin/resumo`** nasceu dessa noite: não havia como perguntar "alguém falou com a
+clínica hoje e a IA respondeu?" — dava pra consultar UM número, nunca listar. Devolve conversas
+atendidas, volume de mensagens, contador de calados e as 15 conversas recentes com número
+mascarado. Sem conteúdo: serve pra enxergar movimento, não pra ler conversa.
+
 **Auditoria de privacidade (05/08)** — varredura atrás de qualquer caminho pelo qual conteúdo
 das 720 conversas pudesse chegar ao banco, ao log ou a um serviço externo. Veredito: **não
 existe**, e não é uma flag — seria preciso escrever uma chamada a um endpoint de mensagens
