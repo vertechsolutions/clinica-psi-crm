@@ -48,8 +48,34 @@ export interface OpcoesImport {
 
 const vazia = (): Coleta => ({ completo: true, chats: [], paginas: 0 });
 
+/** Resultado zerado, pra recusar o import sem ter que preencher 12 campos. */
+const vazio = (): ResultadoImport => ({
+  completo: false,
+  gravado: false,
+  paginas: 0,
+  vistos: 0,
+  grupos: 0,
+  invalidos: 0,
+  daEquipe: 0,
+  daCamila: 0,
+  candidatos: 0,
+  novos: 0,
+  jaNaLista: 0,
+  semData: 0,
+  dozeDigitos: 0,
+});
+
 export async function importarLegado(opts: OpcoesImport = {}): Promise<ResultadoImport> {
   const dry = opts.dry !== false; // padrão é a seco
+
+  // Sem a chave, o HMAC vira hash sem segredo — e telefone tem espaço de busca
+  // pequeno o bastante pra ser revertido em segundos. Pior: quando a chave certa
+  // entrasse, nenhum hash da lista casaria e a IA calaria com todo mundo. Recusar
+  // é a única saída segura; gravar "e arrumar depois" não existe aqui.
+  if (!process.env.WA_LEGADO_CHAVE) {
+    return { ...vazio(), erro: 'WA_LEGADO_CHAVE ausente — configure a variável antes de importar' };
+  }
+
   const deChats = await coletarChats();
   const deContatos = opts.contatos ? await coletarContatos() : vazia();
 
