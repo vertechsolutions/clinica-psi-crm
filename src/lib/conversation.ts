@@ -193,6 +193,25 @@ export async function foiNossoEnvio(wamid: string): Promise<boolean> {
   }
 }
 
+/**
+ * Esse número já trocou alguma mensagem com a Camila? Serve pra distinguir uma
+ * conversa de atendimento das outras que passam pelo mesmo celular da Bruna.
+ * Em erro devolve `false` (não é conversa nossa): o custo de errar pra `true`
+ * seria pausar a IA num número que ela nunca atendeu.
+ */
+export async function temHistorico(waId: string): Promise<boolean> {
+  try {
+    const { rows } = await query<{ existe: number }>(
+      `SELECT 1 AS existe FROM wa_messages WHERE wa_id = $1 LIMIT 1`,
+      [waId],
+    );
+    return rows.length > 0;
+  } catch (e) {
+    console.error('[conversation] temHistorico falhou, assumindo conversa desconhecida', e);
+    return false;
+  }
+}
+
 /** true se a IA deve ficar muda pra esse número (form já enviado, equipe assumiu). */
 export async function isPaused(waId: string): Promise<boolean> {
   try {

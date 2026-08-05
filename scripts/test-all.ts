@@ -1,0 +1,63 @@
+/**
+ * Roda a suíte PURA (sem rede, sem banco, sem chave de API) e resume.
+ * Existe porque a suíte era 13 comandos soltos que ninguém digitava inteiros —
+ * e um teste que não roda não protege nada.
+ *
+ * Rodar:  npm test
+ *
+ * Fora daqui, de propósito (precisam de credencial ou banco):
+ *   npm run test:db                                        Postgres de teste
+ *   npx tsx --env-file=.env.local scripts/test-triagem.ts  Gemini (27 cenários)
+ *   npx tsx --env-file=.env.local scripts/sim-conversa.ts  Gemini (7 personas)
+ *   npx tsx --env-file=.env.local scripts/test-sheets-live.ts
+ *   npx tsx --env-file=.env.local scripts/test-transcribe-live.ts
+ *   npx tsx --env-file=.env.local scripts/test-comprovante-live.ts <arquivo>
+ *   DATABASE_PUBLIC_URL=... npx tsx --env-file=.env.local scripts/replay-conversas.ts
+ */
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+
+const PUROS = [
+  'test-wa-provider', // autenticação do webhook + parse dos dois providers
+  'test-wa-envio', // envio, mídia e bolhas com fetch falso
+  'test-comprovante-core', // validação do Pix (inclui chave mascarada)
+  'test-fechamento', // as 4 bolhas oficiais + backstop de handoff
+  'test-retomada', // [ONDE PARAMOS] e [JÁ TRATADO]
+  'test-ficha', // merge/sanitização da ficha do paciente
+  'test-contato', // nome do paciente (nunca re-perguntar)
+  'test-conducao', // todo turno avança a conversa
+  'test-anti-repeat', // não repetir a mesma resposta
+  'test-split', // quebra em bolhas
+  'test-agenda', // parsers da planilha
+  'test-followup', // canal do reengajamento
+  'test-parse-modelo', // saída do modelo que vem quebrada
+];
+
+const raiz = path.resolve(import.meta.dirname ?? __dirname, '..');
+const falhas: string[] = [];
+const inicio = Date.now();
+
+for (const nome of PUROS) {
+  const r = spawnSync('npx', ['tsx', path.join('scripts', `${nome}.ts`)], {
+    cwd: raiz,
+    encoding: 'utf8',
+    shell: true,
+  });
+  const ok = r.status === 0;
+  if (!ok) {
+    falhas.push(nome);
+    console.log(`\n✖ ${nome}`);
+    // só o essencial do erro: a saída inteira de 13 scripts vira ruído
+    const saida = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n').slice(0, 25);
+    console.log(saida.map((l) => `    ${l}`).join('\n'));
+  } else {
+    console.log(`✔ ${nome}`);
+  }
+}
+
+const seg = ((Date.now() - inicio) / 1000).toFixed(1);
+console.log(`\n${PUROS.length - falhas.length}/${PUROS.length} suítes passaram em ${seg}s`);
+if (falhas.length) {
+  console.log(`falharam: ${falhas.join(', ')}`);
+  process.exit(1);
+}

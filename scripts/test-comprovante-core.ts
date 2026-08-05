@@ -95,6 +95,22 @@ assert.strictEqual(
   'nao_confere',
 );
 
+// Coincidência de dígitos NÃO é prova de pagamento. Um terceiro com chave curta
+// e inteiramente legível pode ser um pedaço do nosso CNPJ por acaso:
+// "34804590" está contido em "53480459000104". Sem máscara visível e sem o
+// titular batendo, isso não pode virar "confere" — seria confirmar sessão paga
+// com Pix que foi pra outra conta.
+assert.strictEqual(
+  verificarDestinatario({ ...base, nomeDestinatario: 'João Silva', chaveDestino: '34804590' }, PIX_CNPJ),
+  'inconclusivo',
+);
+// mesma coincidência, mas com o titular da clínica no comprovante → só confirma
+// porque há um segundo sinal
+assert.strictEqual(
+  verificarDestinatario({ ...base, ...daClinica, chaveDestino: '34804590' }, PIX_CNPJ),
+  'confere',
+);
+
 // ── 3º parâmetro (titular): PIX_CHAVE é só o número, o nome vive na PIX_INFO ──
 // chaveEsperada() prioriza PIX_CHAVE — sem passar a PIX_INFO, o titular some e o
 // comprovante mascarado/ilegível vira acusação ou inconclusivo à toa.

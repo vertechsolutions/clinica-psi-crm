@@ -5,7 +5,11 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
-    "start": "next start"
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/test-all.ts",
+    "test:db": "tsx --env-file=.env.local scripts/test-db-live.ts",
+    "test:webhook": "tsx --env-file=.env.local scripts/test-webhook-http.ts"
   },
   "engines": {
     "node": ">=20.9.0"
@@ -26,6 +30,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4",
+    "tsx": "^4.23.6",
     "typescript": "^5"
   }
 }

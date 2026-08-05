@@ -20,6 +20,7 @@ import {
   recordAssistantMessage,
   recordUserMessage,
   registrarEnvios,
+  temHistorico,
 } from '@/lib/conversation';
 import { bolhasDoTurno } from '@/lib/fechamento';
 import { transcribeAudio } from '@/lib/transcribe';
@@ -88,6 +89,9 @@ function atende(waId: string): boolean {
   return lista.length === 0 || lista.includes(waId);
 }
 
+/** LGPD: log nunca leva o telefone inteiro — só os 4 últimos, pra diagnóstico. */
+const mascarar = (waId: string) => `***${waId.slice(-4)}`;
+
 /**
  * Verificação do webhook por GET — a Meta chama ao configurar o Callback URL e
  * espera o hub.challenge cru de volta. A Z-API não faz handshake (a URL é colada
@@ -147,12 +151,21 @@ async function extractText(msg: MensagemRecebida): Promise<ExtractResult> {
 }
 
 /**
- * Eco de mensagem que SAIU do número da clínica (só a Z-API entrega isso). Duas
+ * Eco de mensagem que SAIU do número da clínica (só a Z-API entrega isso). Três
  * origens possíveis:
  * - a própria Camila (id registrado em `wa_outbound` no envio) → ignora, senão a
  *   IA se pausaria sozinha a cada resposta;
- * - a Bruna digitando no celular → a humana assumiu: grava no histórico e PAUSA
- *   a IA nesse número, pra não existirem duas vozes na mesma conversa.
+ * - a Bruna digitando numa conversa que a Camila já atende → a humana assumiu:
+ *   grava no histórico e PAUSA a IA nesse número, pra não existirem duas vozes;
+ * - a Bruna falando com QUALQUER outra pessoa pelo mesmo celular (amiga, família,
+ *   paciente que ela atende por fora) → **ignora por completo**.
+ *
+ * Esse terceiro caso é o motivo do `temHistorico`: o número da clínica é o
+ * WhatsApp pessoal-profissional dela, e sem essa checagem toda mensagem que ela
+ * mandasse pra alguém criaria uma conversa PAUSADA no banco. Efeito: se aquela
+ * pessoa procurasse a clínica meses depois, a Camila ficaria muda pra ela e
+ * ninguém saberia — o lead sumia em silêncio. De quebra, gravar conversa pessoal
+ * de terceiro que nunca pediu triagem é dado que não temos por que guardar.
  *
  * Só volta pela mão da equipe (`resumeConversation`) — é o mesmo estado do
  * handoff, e por isso a Camila não retoma sozinha depois.
@@ -164,13 +177,15 @@ async function tratarEco(msg: MensagemRecebida): Promise<void> {
   // custo de um falso positivo aqui é a Camila emudecer sem ninguém ter assumido.
   await new Promise((r) => setTimeout(r, 2000));
   if (await foiNossoEnvio(msg.messageId)) return;
+  // conversa que a Camila nunca atendeu não é handoff: é a vida da Bruna
+  if (!(await temHistorico(msg.waId))) return;
   const texto = msg.texto || `[${msg.tipoCru} enviado pela equipe]`;
   const isNew = await recordAssistantMessage(msg.waId, texto, msg.messageId);
   if (!isNew) return; // reentrega do mesmo eco
   const jaPausada = await isPaused(msg.waId);
   if (!jaPausada) {
     await pauseConversation(msg.waId);
-    console.log(`[webhook] atendimento humano detectado em ${msg.waId} — IA pausada nesse número.`);
+    console.log(`[webhook] atendimento humano detectado em ${mascarar(msg.waId)} — IA pausada nesse número.`);
   }
 }
 
@@ -196,7 +211,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!atende(msg.waId)) {
     // fora da allowlist da estreia: nem grava, nem responde (LGPD — é conversa
     // de terceiro que não pediu triagem). Loga mascarado só pra diagnóstico.
-    console.log(`[webhook] número fora da WA_ALLOWLIST (***${msg.waId.slice(-4)}) — ignorado.`);
+    console.log(`[webhook] número fora da WA_ALLOWLIST (${mascarar(msg.waId)}) — ignorado.`);
     return new Response('ok', { status: 200 });
   }
 
@@ -249,7 +264,7 @@ export async function POST(req: Request): Promise<Response> {
       if (paused) {
         // grava a mensagem entrante mas NÃO responde — silêncio da IA é o
         // combinado. Loga pra Bruna ver que teve resposta do paciente.
-        console.log(`[webhook] conversa ${from} pausada — mensagem gravada, IA silenciosa.`);
+        console.log(`[webhook] conversa ${mascarar(from)} pausada — mensagem gravada, IA silenciosa.`);
         return;
       }
 

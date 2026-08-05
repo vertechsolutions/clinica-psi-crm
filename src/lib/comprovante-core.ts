@@ -65,8 +65,13 @@ export function verificarDestinatario(
   if (chaveDig.length >= 8 && expDig.length >= 8 && chaveDig.slice(-8) === expDig.slice(-8)) {
     return 'confere';
   }
-  // leitura parcial: os dígitos que deram pra ler são um pedaço contíguo da chave
-  if (chaveDig.length >= 6 && expDig.includes(chaveDig)) return 'confere';
+  // Leitura parcial: os dígitos legíveis são um pedaço contíguo da nossa chave.
+  // Coincidência de dígitos sozinha NÃO é prova — "34804590" está dentro de
+  // "53480459000104" e pode ser a chave inteira de um terceiro. Só confirma com
+  // um segundo sinal: máscara visível (o banco escondeu o resto) ou o titular
+  // batendo. Sem nenhum dos dois, fica pra equipe conferir na mão.
+  const parcial = chaveDig.length >= 6 && expDig.includes(chaveDig);
+  if (parcial) return MASCARADA.test(chave) || titular() ? 'confere' : 'inconclusivo';
   if (chave.includes('@')) {
     return normaliza(esperadoRaw).includes(normaliza(chave)) ? 'confere' : 'nao_confere';
   }
