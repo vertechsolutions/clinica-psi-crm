@@ -527,6 +527,89 @@ Também: os dois `console.log` que ainda levavam o telefone inteiro passaram a m
   Next não enxerga valor vindo de re-export — hoje é inofensivo (o default é o mesmo),
   mas silencia config futura.
 
+### Conversas antigas x novas — a lista de legado (05/08/2026)
+
+A Bruna pareou a instância com o celular dela. O diagnóstico (`scripts/diagnostico-zapi.ts`,
+novo, só leitura) mediu o tamanho do problema: **720 conversas individuais** já existentes
+no aparelho, mais 12 grupos. Todas são atendimento manual dela — o piloto rodava no número
+de teste da Meta, então **nenhum** chat daquele aparelho é da Camila. Esvaziar a
+`WA_ALLOWLIST` sem mais nada faria a IA cair em cima das 720 de uma vez.
+
+**A lista**: `wa_legado` guarda o **HMAC** do telefone (`WA_LEGADO_CHAVE`), sem nome, sem
+número em claro, sem `lastMessageTime`, com `criado_em` truncado no dia. Só faz igualdade
+exata, então o hash não custa funcionalidade — e um dump do Postgres (que é publicamente
+alcançável pelo proxy) deixa de revelar a agenda de contatos dela. A impressão digital da
+chave vai no `app_config`: trocar a chave passa a **calar** a IA em vez de silenciosamente
+esvaziar a lista.
+
+**O gate** é a primeira instrução do `after()` no webhook — antes do `recordUserMessage`
+(não grava terceiro), do `extractText` (áudio de paciente em atendimento humano não vai
+pro Gemini) e do `markReadAndType` (o badge de não-lida no celular da Bruna é a rede de
+segurança inteira). Ordem: equipe (`NOTIFY_ALERT_NUMBERS`) nunca é calada → botão vermelho
+(`camila_muda` em `app_config`, efeito em <1s sem restart) → allowlist vazia **e** snapshot
+nunca rodado = tudo mudo (torna impossível o erro de ordem do rollout) → chave divergente =
+mudo → a lista.
+
+Dois números que o diagnóstico revelou e que mudaram o desenho:
+
+- **64 dos 720 chats vêm com 12 dígitos** (sem o 9º dígito). O risco registrado em
+  "wa_id pode divergir" é real nesta instância: `chavesEquivalentes()` grava e consulta as
+  duas grafias, senão o mesmo humano chegando na outra forma não casaria com a lista.
+- **428 dos 720 vêm sem `lastMessageTime`**. Qualquer filtro por data no importador teria
+  descartado 59% da lista em silêncio — por isso não existe corte temporal: o corte é
+  operacional (importar **antes** de esvaziar a allowlist, quando nada no aparelho é da IA).
+
+**Correções que a virada exigiu**, achadas na revisão adversarial e verificadas no código:
+
+1. **O aprendizado por eco não rodava.** O `!atende()` retornava 200 antes do branch
+   `fromMe`, e no eco o `phone` é a contraparte — então toda mensagem que a Bruna mandasse
+   pra quem não está na allowlist era descartada antes do `tratarEco`. Agora o filtro é
+   `!msg.fromMe && !atende(...)`, e o eco pra número desconhecido marca legado **enquanto a
+   allowlist estiver preenchida** (depois da virada o mesmo eco significaria "a Bruna
+   abordou um lead novo", e marcá-lo recriaria o bug do commit `400279e`).
+2. **`status@broadcast` e afins.** `normalizarWaId('status@broadcast')` é a string vazia;
+   hoje `atende('')` é false só porque a allowlist tem números. Esvaziá-la juntaria o status
+   de todo mundo numa "conversa" de `wa_id` vazio, chamando o Gemini e tentando responder
+   pra telefone nenhum. `ehConversaIndividual()` (em `wa/types.ts`) recusa broadcast, grupo,
+   canal e comprimento fora de 10–15 dígitos.
+3. **`@lid`.** A doc da Z-API (`tips/lid.md`) avisa que o `phone` pode vir como
+   identificador anônimo quando o contato liga a privacidade de número — e o `/chats` não
+   devolve LID nenhum, então nenhuma lista de telefone reconhece essa pessoa. A primeira
+   versão atendia e só logava; uma auditoria mostrou que isso **invalidava a garantia**
+   inteira (uma paciente antiga com privacidade ligada teria a mensagem gravada, o áudio
+   transcrito no Gemini e resposta da Camila). Agora a IA **não atende** e a equipe recebe
+   um alerta único por número pra responder à mão. Custo aceito: lead novo com privacidade
+   ligada também vai pra fila humana — não há como distinguir os dois com o que a Z-API dá.
+4. **O follow-up era a segunda porta de saída.** `findColdLeads` não conhecia a lista, e
+   `FOLLOWUP_ENABLED=false` fazia disso uma mina enterrada em vez de bug ativo. Agora o
+   ciclo filtra o legado (e aborta o ciclo se não conseguir checar — mensagem proativa pro
+   número errado não tem desfazer).
+
+**Auditoria de privacidade (05/08)** — varredura atrás de qualquer caminho pelo qual conteúdo
+das 720 conversas pudesse chegar ao banco, ao log ou a um serviço externo. Veredito: **não
+existe**, e não é uma flag — seria preciso escrever uma chamada a um endpoint de mensagens
+que não está em lugar nenhum do repo (e que a Z-API não oferece em instância Multi Device:
+`chat-messages` é documentado como indisponível). Achados corrigidos junto: o **eco não
+consultava a lista** (número marcado como legado depois de já ter histórico ainda tinha o
+texto da Bruna gravado); `zapi.ts` logava o **erro cru** no `read-message`/`downloadMedia`, e
+numa falha de rede a `cause` da undici carrega a URL — que tem o `ZAPI_INSTANCE_TOKEN` dentro
+(agora tudo passa por `mensagemDeErro()`, que ainda censura os segredos por precaução);
+`cleanupExpired` não alcançava **mensagem órfã** (gravada em `wa_messages` antes de existir a
+linha em `wa_conversations`, quando o turno morre no meio) — ganhou varredura por idade; e o
+único log com telefone inteiro (`whatsapp.ts`) passou a mascarar. Por decisão do Murilo
+("só salva o número"), a coluna `ultima_tentativa_em` foi removida: fica só o contador
+`tentativas`, sem carimbo de hora — responde "tem alguém sendo calado por engano?" sem
+registrar quando cada pessoa escreveu.
+
+**Freios**, em ordem: `DELETE /api/admin/legado?waId=` (um número) → `PATCH {"camilaMuda":true}`
+(tudo, <1s, sem restart) → repor `WA_ALLOWLIST` (restart, e a Z-API não reentrega o que
+chegar na janela). **Não existe** kill switch que *religue* o tratamento de todos os
+terceiros de uma vez: às 19h de um dia de atendimento esse é o pior movimento possível.
+
+E o que a Bruna precisa saber é uma frase só: **se a Camila falar onde não devia, é só ela
+responder pelo celular** — o eco pausa a IA naquele número em ~2s, sem chave de admin, sem
+o Murilo, sem deploy.
+
 ### Suíte de testes (04/08/2026)
 
 `npm test` roda as 13 suítes puras de uma vez (antes eram 13 comandos que ninguém
@@ -536,6 +619,9 @@ digitava inteiros). `tsx` virou devDependency — antes todo `npx tsx` baixava o
 |---|---|---|
 | `scripts/test-wa-provider.ts` | autenticação do webhook + parse dos dois providers | nada |
 | `scripts/test-wa-envio.ts` | envio, mídia e bolhas com `fetch` falso; `onSent` por bolha | nada |
+| `scripts/test-legado.ts` | hash, variantes do 9º dígito, equipe protegida, o que vira linha na lista | nada |
+| `scripts/test-zapi-chats.ts` | coleta paginada dos chats (não para em página curta; erro não vaza o token) | nada |
+| `scripts/diagnostico-zapi.ts` | *não é teste*: diagnóstico da instância (status, número, webhook, chats) | `.env.local` |
 | `scripts/test-db-live.ts` (`npm run test:db`) | dedup, `wa_outbound`, merge da ficha, pausa/retomada, retenção | `TEST_DATABASE_URL` |
 | `scripts/test-webhook-http.ts` (`npm run test:webhook`) | orquestração real: 401, allowlist, dedup, eco próprio vs. humano | `TEST_DATABASE_URL` |
 

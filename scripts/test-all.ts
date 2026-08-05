@@ -20,6 +20,8 @@ import path from 'node:path';
 const PUROS = [
   'test-wa-provider', // autenticação do webhook + parse dos dois providers
   'test-wa-envio', // envio, mídia e bolhas com fetch falso
+  'test-legado', // hash/variantes da lista de conversas antigas da Bruna
+  'test-zapi-chats', // coleta paginada dos chats do aparelho
   'test-comprovante-core', // validação do Pix (inclui chave mascarada)
   'test-fechamento', // as 4 bolhas oficiais + backstop de handoff
   'test-retomada', // [ONDE PARAMOS] e [JÁ TRATADO]

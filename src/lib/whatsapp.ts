@@ -108,7 +108,8 @@ export async function sendInternalAlert(to: string, body: string): Promise<strin
   try {
     return await sendText(to, body);
   } catch (err) {
-    console.error(`[whatsapp] alerta interno pra ${to} falhou`, err);
+    // número mascarado como em todo o resto (era o único log com telefone inteiro)
+    console.error(`[whatsapp] alerta interno pra ***${to.slice(-4)} falhou`, err);
     return null;
   }
 }

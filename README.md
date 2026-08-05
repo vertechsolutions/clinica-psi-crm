@@ -63,6 +63,8 @@ criado sozinho no primeiro boot (`instrumentation.ts`).
 | `ZAPI_INSTANCE_ID` / `ZAPI_INSTANCE_TOKEN` | da instância no painel da Z-API (`WA_PROVIDER=zapi`) |
 | `ZAPI_CLIENT_TOKEN` | token de segurança da conta Z-API (aba Segurança) |
 | `ZAPI_WEBHOOK_SECRET` | segredo que **você** inventa; vai na query da URL do webhook (ver passo 3) |
+| `WA_LEGADO_CHAVE` | string aleatória longa: chave do HMAC dos telefones da lista de legado (ver passo 5). Trocar invalida a lista e **cala** a IA |
+| `WA_ALLOWLIST` | trava de estreia: só esses números falam com a IA. **Vazia = atende todo mundo** (o normal, depois do passo 5) |
 | `WHATSAPP_TOKEN` | token permanente (System User) do app Meta (`WA_PROVIDER=meta`) |
 | `WHATSAPP_PHONE_NUMBER_ID` | ID do número da clínica (WhatsApp Manager) — muda se o número mudar |
 | `WHATSAPP_VERIFY_TOKEN` | uma senha que você inventa (ver passo 3) |
@@ -136,10 +138,42 @@ No **App Dashboard → WhatsApp → Configuration → Webhook**:
 
 ### 4. Testar
 
-Mande uma mensagem pro número da clínica. Fluxo de teste sugerido: você e o Jean
-validam pelo número; quando a Bruna aprovar o raciocínio pela tela, é só apontar o
-número dela. Pra ajustar o tom, edite na tela e clique **Salvar raciocínio** — vale
-na hora no WhatsApp.
+Antes de qualquer coisa, rode o diagnóstico (só leitura, não fala com ninguém):
+
+```bash
+npx tsx --env-file=.env.local scripts/diagnostico-zapi.ts
+```
+
+Ele confere se a instância está conectada, se o número pareado é o certo, se o
+webhook aponta pra cá com o segredo certo, se o eco `fromMe` está ligado e quantos
+chats o aparelho já sincronizou.
+
+Depois mande uma mensagem pro número da clínica. Pra ajustar o tom, edite na tela e
+clique **Salvar raciocínio** — vale na hora no WhatsApp.
+
+### 5. Separar as conversas antigas das novas
+
+O número é o WhatsApp profissional da Bruna e **já tinha conversas em andamento**
+quando a Camila entrou: pacientes que ela atende à mão, leads antigos, contato
+pessoal. Sem separar, esvaziar a `WA_ALLOWLIST` faria a IA cair em cima de todas de
+uma vez.
+
+A lista de **legado** guarda o hash (nunca o telefone) de quem já era dela. Ordem:
+
+1. Deploy com a `WA_ALLOWLIST` ainda preenchida e a `WA_LEGADO_CHAVE` setada. A
+   tabela vazia deixa o filtro inerte — nada muda de comportamento. Daqui em
+   diante, toda vez que a Bruna escreve pra um número que a Camila nunca atendeu,
+   aquele número entra na lista sozinho.
+2. Importe **a seco** (`"dry":true`), duas vezes com algumas horas de intervalo. Se
+   o total mal mudar, o aparelho terminou de sincronizar.
+3. Grave (`"dry":false,"esperado":<total do DRY>`). A gravação recusa um delta
+   grande de propósito — é o que impede importar um aparelho pela metade.
+4. Confira com a Bruna: `GET /api/admin/legado?waId=<número de um paciente antigo>`
+   tem que responder `legado: true`.
+5. **Só então** esvazie a `WA_ALLOWLIST`. A Camila abre pra leads novos.
+
+Se ela falar onde não devia, **a Bruna só precisa responder pelo celular** — o eco
+pausa a IA naquele número em segundos, sem depender de ninguém.
 
 ## Privacidade e dados (LGPD)
 
@@ -149,7 +183,15 @@ São dados sensíveis de saúde (categoria especial). O que já está no código
   após **90 dias**; conversa incompleta após **30 dias**. A limpeza roda no boot e
   a cada 24h.
 - **Direito ao apagamento**: `DELETE /api/admin/patient?waId=<numero>` (com header
-  `x-admin-key`) apaga tudo de um número.
+  `x-admin-key`) apaga tudo de um número. A resposta traz `legadoRestante: true`
+  quando aquele número também está na lista de legado (ver abaixo) — o expurgo só
+  fica completo com `DELETE /api/admin/legado?waId=<numero>`.
+- **Lista de legado** (`wa_legado`): guarda **só o HMAC** do telefone de quem já era
+  atendido à mão pela Bruna — sem nome, sem telefone em claro, sem conteúdo, com a
+  data truncada no dia. É lista de *supressão*: existe pra que a IA **não** trate
+  aquelas pessoas, e por isso fica de fora da rotina de retenção (expirar a linha
+  devolveria essas conversas pra Camila em silêncio). A chave do HMAC mora em env,
+  nunca no banco: um dump não revela a agenda da Bruna.
 - **Endpoints sensíveis autenticados** (`/api/config`, `/api/admin/*`).
 - **Em trânsito**: em produção use a `DATABASE_URL` **interna** do Railway
   (`*.railway.internal`) — rede privada, sem SSL exposto na internet.

@@ -12,6 +12,7 @@
  */
 import { query } from './db';
 import { recordAssistantMessage, registrarEnvios } from './conversation';
+import { classificarNovos } from './legado';
 import { precisaTemplate, sendText, sendTemplate } from './whatsapp';
 
 /** Mensagem 7 do FAQ da Bruna — reengajamento dentro da janela de 24h. */
@@ -71,6 +72,31 @@ async function findColdLeads(): Promise<ColdLead[]> {
   return rows;
 }
 
+/**
+ * Tira da lista de reengajamento quem está marcado como conversa antiga da equipe.
+ *
+ * O follow-up é o ÚNICO ponto do sistema em que a IA fala sem ter sido chamada, e
+ * o gate do webhook não o alcança: alguém que a Camila já triou e que a equipe
+ * depois declarou "esse é paciente antigo da Bruna" continua com ficha em
+ * `wa_conversations` e receberia "não tive seu retorno" 24h depois. O filtro não
+ * dá pra fazer no SQL porque a lista guarda hash, não o número.
+ */
+async function filtrarLegado<T extends { wa_id: string }>(leads: T[]): Promise<T[]> {
+  if (leads.length === 0) return leads;
+  try {
+    const { novos } = await classificarNovos(leads.map((l) => l.wa_id));
+    const livres = new Set(novos);
+    const fora = leads.length - leads.filter((l) => livres.has(l.wa_id)).length;
+    if (fora) console.log(`[followup] ${fora} lead(s) pulado(s) por serem conversa antiga da equipe.`);
+    return leads.filter((l) => livres.has(l.wa_id));
+  } catch (e) {
+    // sem conseguir checar, não manda: mensagem proativa pro número errado não
+    // tem desfazer, e o ciclo seguinte tenta de novo daqui a 1h.
+    console.error('[followup] checagem de legado falhou — ciclo abortado por precaução', e);
+    return [];
+  }
+}
+
 async function marcarEnviado(waId: string): Promise<void> {
   await query(
     `UPDATE wa_conversations
@@ -83,7 +109,7 @@ async function marcarEnviado(waId: string): Promise<void> {
 /** Roda um ciclo de follow-up. Retorna quantos foram reengajados. */
 export async function runFollowup(now = new Date()): Promise<number> {
   const templateName = process.env.FOLLOWUP_TEMPLATE_NAME;
-  const leads = await findColdLeads();
+  const leads = await filtrarLegado(await findColdLeads());
   let enviados = 0;
   for (const lead of leads) {
     const canal = decideChannel(

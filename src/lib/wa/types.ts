@@ -36,6 +36,14 @@ export interface MensagemRecebida {
   /** nome do perfil do WhatsApp (pushName), quando o provider manda */
   nome?: string;
   /**
+   * Identificador anônimo (`@lid`) que a Z-API entrega no lugar do telefone quando
+   * o contato liga a privacidade de número. Quando ele aparece, o `waId` NÃO é um
+   * telefone — e nenhuma lista construída a partir de telefone (a de legado, a
+   * allowlist) consegue reconhecer essa pessoa. Fica registrado pra que isso seja
+   * visível em vez de silencioso.
+   */
+  lid?: string;
+  /**
    * true = a mensagem SAIU do número da clínica. Pode ser a Camila (nosso envio
    * pela API, que volta como eco) ou a Bruna digitando no celular — quem separa
    * os dois é o webhook, consultando os ids que registramos ao enviar.
@@ -97,4 +105,23 @@ export interface WaProvider {
 /** Tira "+", espaços e sufixos tipo "@c.us": o wa_id é só dígitos. */
 export function normalizarWaId(bruto: string): string {
   return (bruto || '').replace(/\D/g, '');
+}
+
+/** Sufixos de identificador que NÃO são uma pessoa: grupo, lista de transmissão,
+ *  status e canal. `replace(/\D/g,'')` os transformaria em dígitos inocentes. */
+const NAO_E_PESSOA = /-group|@g\.us|@broadcast|@newsletter|status@/i;
+
+/**
+ * O identificador é de uma conversa individual com uma pessoa?
+ *
+ * Existe porque `normalizarWaId('status@broadcast')` é a string VAZIA, e uma
+ * conversa de wa_id vazio junta as atualizações de status de todo mundo numa
+ * "paciente" só. Um E.164 sem "+" tem de 10 (fixo curto no exterior) a 15 dígitos
+ * — fora dessa faixa não é telefone de gente.
+ */
+export function ehConversaIndividual(phoneCru: string | undefined, isNewsletter = false): boolean {
+  if (isNewsletter) return false;
+  if (!phoneCru || NAO_E_PESSOA.test(phoneCru)) return false;
+  const digitos = normalizarWaId(phoneCru);
+  return digitos.length >= 10 && digitos.length <= 15;
 }

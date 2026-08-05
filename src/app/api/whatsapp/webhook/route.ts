@@ -33,6 +33,7 @@ import {
   type AnaliseComprovante,
   type VerificacaoDestinatario,
 } from '@/lib/comprovante-core';
+import { alertarContatoAnonimo, deveIgnorarPorLegado, ehLegado, marcarLegado } from '@/lib/legado';
 import { hasDb } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -178,7 +179,21 @@ async function tratarEco(msg: MensagemRecebida): Promise<void> {
   await new Promise((r) => setTimeout(r, 2000));
   if (await foiNossoEnvio(msg.messageId)) return;
   // conversa que a Camila nunca atendeu não é handoff: é a vida da Bruna
-  if (!(await temHistorico(msg.waId))) return;
+  if (!(await temHistorico(msg.waId))) {
+    // ENQUANTO a allowlist estiver preenchida, a IA não fala com ninguém além da
+    // equipe — então a Bruna escrevendo pra um número que a Camila nunca atendeu
+    // só pode ser conversa dela. Entra na lista (só o hash, nenhum conteúdo), e é
+    // assim que os chats que o import não pegou vão sendo cobertos.
+    // Depois da virada o mesmo eco significa outra coisa ("a Bruna abordou um lead
+    // novo"), e marcá-lo recriaria o bug descrito acima — o lead sumindo em
+    // silêncio. Aí volta a ser só ignorar.
+    if (allowlist().length > 0) await marcarLegado(msg.waId, 'eco');
+    return;
+  }
+  // Número que a Camila já atendeu mas que DEPOIS foi declarado conversa da equipe
+  // (`POST /api/admin/legado`): a partir daí nem o que a Bruna digita ali entra no
+  // nosso banco. Sem isto, "marcar como intocável" calava só a entrada.
+  if (await ehLegado(msg.waId)) return;
   const texto = msg.texto || `[${msg.tipoCru} enviado pela equipe]`;
   const isNew = await recordAssistantMessage(msg.waId, texto, msg.messageId);
   if (!isNew) return; // reentrega do mesmo eco
@@ -208,10 +223,34 @@ export async function POST(req: Request): Promise<Response> {
   const msg = parseWebhook(raw)[0];
   if (!msg) return new Response('ok', { status: 200 });
 
-  if (!atende(msg.waId)) {
+  // A allowlist não se aplica ao eco: nele o `phone` é a CONTRAPARTE da conversa,
+  // não a Bruna. Filtrar antes descartava toda mensagem que ela mandasse pra quem
+  // não está na lista — justamente o sinal que ensina quem já é paciente dela.
+  if (!msg.fromMe && !atende(msg.waId)) {
     // fora da allowlist da estreia: nem grava, nem responde (LGPD — é conversa
     // de terceiro que não pediu triagem). Loga mascarado só pra diagnóstico.
     console.log(`[webhook] número fora da WA_ALLOWLIST (${mascarar(msg.waId)}) — ignorado.`);
+    return new Response('ok', { status: 200 });
+  }
+
+  // Contato com privacidade de número ligada: a Z-API manda um `@lid` no lugar do
+  // telefone. Nenhuma lista construída a partir de telefone reconhece essa pessoa
+  // — nem a de legado, nem a allowlist —, então não há como saber se é uma
+  // paciente que a Bruna já atende ou alguém novo. A IA não responde, e a equipe é
+  // avisada pra atender à mão: o erro de atender seria a Camila abrindo triagem
+  // (e pedindo Pix) com quem já está em tratamento.
+  if (msg.lid) {
+    console.warn(`[webhook] contato com número oculto (${mascarar(msg.waId)}) — IA silenciosa, equipe avisada.`);
+    // eco não gera alerta: é a própria Bruna falando naquela conversa
+    if (!msg.fromMe) {
+      after(async () => {
+        try {
+          await alertarContatoAnonimo(msg.waId);
+        } catch (err) {
+          console.error('[webhook] alerta de contato anônimo falhou', err);
+        }
+      });
+    }
     return new Response('ok', { status: 200 });
   }
 
@@ -239,6 +278,24 @@ export async function POST(req: Request): Promise<Response> {
 
   after(async () => {
     try {
+      // Conversa que já era da Bruna antes da Camila existir nesse número: não é
+      // atendimento da IA. Silêncio total.
+      //
+      // Este é o PRIMEIRO passo de propósito: antes do recordUserMessage (não
+      // grava conversa de quem nunca pediu triagem), antes do extractText (áudio
+      // de paciente em atendimento humano não vai pro Gemini) e antes do
+      // markReadAndType — o badge de não-lida no celular da Bruna é a rede de
+      // segurança inteira, e marcar como lida aqui a destruiria em silêncio.
+      // O teste `test-webhook-http` assegura ZERO linha em wa_messages neste
+      // caminho; é o que impede um refactor futuro de coletar antes de calar.
+      const silencio = await deveIgnorarPorLegado(from);
+      if (silencio) {
+        // o motivo distingue operação normal ("legado") de "a IA está calada com
+        // TODO MUNDO" — que é o que a vigília depois da virada precisa enxergar
+        console.log(`[webhook] IA silenciosa em ${mascarar(from)} — motivo: ${silencio}.`);
+        return;
+      }
+
       // Handoff: se a conversa já foi pausada (form enviado), a IA fica muda pra
       // esse número. A equipe humana é quem assume daqui em diante. Ainda
       // gravamos a mensagem entrante pro histórico (útil pra Bruna revisar).

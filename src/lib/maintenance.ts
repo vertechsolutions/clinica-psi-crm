@@ -22,10 +22,22 @@ export async function cleanupExpired(): Promise<{ conversas: number; mensagens: 
      )`,
   );
   const conv = await query(`DELETE FROM wa_conversations WHERE ${expiraWhere()}`);
+  // Mensagem ÓRFÃ: `recordUserMessage` grava em wa_messages antes de existir linha
+  // em wa_conversations (que só nasce no upsert, depois da resposta). Se o turno
+  // morre no meio — o Gemini falha e o webhook cai no fallback —, aquela linha
+  // fica fora da subquery acima e nunca expiraria. Varre pelo prazo mais longo.
+  const orfas = await query(
+    `DELETE FROM wa_messages m
+      WHERE m.created_at < now() - interval '${RETENCAO_CONCLUIDA}'
+        AND NOT EXISTS (SELECT 1 FROM wa_conversations c WHERE c.wa_id = m.wa_id)`,
+  );
   // ids de envio só servem pra reconhecer o eco, que chega em segundos — depois
   // de um dia viram lixo. Sem isto a tabela cresceria pra sempre.
   await query(`DELETE FROM wa_outbound WHERE created_at < now() - interval '1 day'`);
-  return { mensagens: msgs.rowCount ?? 0, conversas: conv.rowCount ?? 0 };
+  // `wa_legado` fica de fora de propósito: é lista de SUPRESSÃO (guarda o hash de
+  // quem a IA não deve abordar) e expirá-la devolveria essas pessoas pra Camila em
+  // silêncio. Não guarda conteúdo nem telefone — só o hash e um contador.
+  return { mensagens: (msgs.rowCount ?? 0) + (orfas.rowCount ?? 0), conversas: conv.rowCount ?? 0 };
 }
 
 /**

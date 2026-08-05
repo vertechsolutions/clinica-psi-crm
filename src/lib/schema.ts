@@ -10,6 +10,8 @@ import { getPool } from './db';
  *   faz a deduplicação dos webhooks reentregues numa só tacada.
  * - wa_outbound: ids do que a gente enviou, pra distinguir o eco da própria
  *   Camila da Bruna digitando no celular (Z-API entrega os dois como fromMe).
+ * - wa_legado: hash dos números que já eram atendidos à mão pela Bruna antes da
+ *   Camila — a IA fica muda pra eles.
  * - app_config: config editável em runtime (o "raciocínio ativo" calibrado na tela
  *   e usado pelo webhook do WhatsApp).
  */
@@ -77,6 +79,31 @@ export async function initSchema(): Promise<void> {
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_wa_outbound_created ON wa_outbound (created_at);
     `);
+
+    // Lista de LEGADO: as conversas que já eram atendidas à mão pela Bruna quando
+    // a Camila entrou no número profissional dela. Guarda só o HMAC do telefone —
+    // são centenas de pessoas que nunca pediram triagem, e a tabela só faz
+    // igualdade exata, então o número em claro não acrescenta nada.
+    //
+    // Tabela separada de wa_conversations de propósito: o cleanupExpired apaga
+    // aquelas linhas em 30/90 dias, e o número voltaria a ser "novo" em silêncio.
+    // Pelo mesmo motivo esta tabela NÃO entra na rotina de retenção: é lista de
+    // supressão, cuja finalidade é justamente não tratar (ver src/lib/maintenance.ts).
+    // `tentativas` é um contador SEM carimbo de hora, de propósito: registrar
+    // quando cada número escreveu seria guardar metadado de comunicação de gente
+    // que não é paciente. O contador sozinho responde a única pergunta que a
+    // operação precisa fazer — "tem alguém insistindo e sendo calado por engano?".
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wa_legado (
+        chave_hash          TEXT PRIMARY KEY,
+        origem              TEXT NOT NULL DEFAULT 'snapshot'
+                            CHECK (origem IN ('snapshot','contato','eco','manual')),
+        tentativas          INT NOT NULL DEFAULT 0,
+        criado_em           TIMESTAMPTZ NOT NULL DEFAULT date_trunc('day', now())
+      );
+    `);
+    // bases criadas antes desta decisão: some com a coluna de horário
+    await client.query(`ALTER TABLE wa_legado DROP COLUMN IF EXISTS ultima_tentativa_em;`);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS app_config (

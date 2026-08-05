@@ -132,6 +132,47 @@ assert.deepStrictEqual(
   'aviso de desconexão é ignorado',
 );
 assert.deepStrictEqual(zapiProvider.parse('não é json'), [], 'json inválido não derruba o webhook');
+// Identificadores que NÃO são uma pessoa. Enquanto a WA_ALLOWLIST está preenchida
+// isto fica escondido (`atende('')` é false só porque a lista tem números);
+// esvaziá-la abriria caminho pra status@broadcast virar uma "conversa" de wa_id
+// vazio, juntando o status de todo mundo, chamando o Gemini e tentando responder.
+for (const phone of ['status@broadcast', '120363019502650977-group', '120363019502650977@g.us', '123456789@newsletter']) {
+  assert.deepStrictEqual(
+    zapiProvider.parse(JSON.stringify({ phone, messageId: 'B1', text: { message: 'oi' } })),
+    [],
+    `${phone} não é conversa individual`,
+  );
+}
+assert.deepStrictEqual(
+  zapiProvider.parse(
+    JSON.stringify({ phone: '5527988420050', messageId: 'N1', isNewsletter: true, text: { message: 'oi' } }),
+  ),
+  [],
+  'canal (newsletter) é ignorado mesmo vindo com telefone',
+);
+assert.deepStrictEqual(
+  zapiProvider.parse(JSON.stringify({ phone: '12345', messageId: 'C1', text: { message: 'oi' } })),
+  [],
+  'telefone curto demais não é gente',
+);
+
+// @lid: o contato ligou a privacidade de número, e o "telefone" que chega é um
+// identificador anônimo. Passa (a decisão é atender em caso de dúvida), mas fica
+// registrado — nenhuma lista construída a partir de telefone reconhece essa pessoa.
+const comLid = zapiProvider.parse(
+  JSON.stringify({
+    phone: '999999999999999@lid',
+    chatLid: '999999999999999@lid',
+    messageId: 'L1',
+    text: { message: 'oi' },
+  }),
+)[0];
+assert.strictEqual(comLid.waId, '999999999999999');
+assert.strictEqual(comLid.lid, '999999999999999@lid', 'o @lid é preservado pro webhook avisar');
+const semLid = zapiProvider.parse(
+  JSON.stringify({ phone: '5527988420050', messageId: 'L2', senderLid: '888@lid', text: { message: 'oi' } }),
+)[0];
+assert.strictEqual(semLid.lid, undefined, 'telefone de verdade não vira caso de @lid');
 assert.deepStrictEqual(
   zapiProvider.parse(JSON.stringify({ phone: '55279', messageId: 'X', instanceId: 'OUTRA', text: { message: 'oi' } })),
   [],

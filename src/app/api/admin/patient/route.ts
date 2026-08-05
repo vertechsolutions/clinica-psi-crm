@@ -1,6 +1,7 @@
 import { isAdmin } from '@/lib/auth';
 import { resumeConversation } from '@/lib/conversation';
 import { hasDb, query } from '@/lib/db';
+import { consultarLegado } from '@/lib/legado';
 import { deletePatientData } from '@/lib/maintenance';
 import { sanitizarCamposFicha } from '@/lib/ficha';
 import { type LeadExtraido } from '@/lib/triagem';
@@ -170,9 +171,15 @@ export async function DELETE(req: Request): Promise<Response> {
 
   try {
     const r = await deletePatientData(waId);
+    // A lista de legado NÃO é apagada aqui: ela existe justamente pra garantir que
+    // aquele número não volte a ser tratado, e removê-la faria a Camila abordar de
+    // novo quem pediu pra ser esquecido. Mas o titular precisa saber que sobrou um
+    // registro (o hash do número), então isso vai na resposta em vez de ficar
+    // escondido — quem quiser o expurgo total usa DELETE /api/admin/legado depois.
+    const { legado: legadoRestante } = await consultarLegado(waId).catch(() => ({ legado: false }));
     // loga só a contagem — nunca o número em claro (minimização em logs)
     console.log(`[admin] apagados dados de 1 paciente: ${r.conversas} conversa(s), ${r.mensagens} mensagem(ns)`);
-    return Response.json({ ok: true, ...r });
+    return Response.json({ ok: true, ...r, legadoRestante });
   } catch (err) {
     console.error('[admin] exclusão falhou', err);
     return Response.json({ error: 'falha ao excluir' }, { status: 500 });
