@@ -55,7 +55,7 @@ const post = (body: unknown, comSegredo = true) =>
 const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function subirServidor(): Promise<ChildProcess> {
-  const proc = spawn('npx', ['next', 'dev', '--webpack', '-p', String(PORTA)], {
+  const proc = spawn('npx', ['next', 'dev', '-p', String(PORTA)], {
     env,
     shell: true,
     stdio: 'ignore',
