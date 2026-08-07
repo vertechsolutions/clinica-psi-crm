@@ -13,6 +13,7 @@
  *   npx tsx --env-file=.env.local scripts/test-transcribe-live.ts
  *   npx tsx --env-file=.env.local scripts/test-comprovante-live.ts <arquivo>
  *   DATABASE_PUBLIC_URL=... npx tsx --env-file=.env.local scripts/replay-conversas.ts
+ *   DATABASE_PUBLIC_URL=... npx tsx scripts/sync-prompt.ts        prompt do banco
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -33,6 +34,7 @@ const PUROS = [
   'test-agenda', // parsers da planilha
   'test-followup', // canal do reengajamento
   'test-parse-modelo', // saída do modelo que vem quebrada
+  'test-emoji', // nada que chega ao paciente tem emoji (e preço/acento sobrevivem)
 ];
 
 const raiz = path.resolve(import.meta.dirname ?? __dirname, '..');

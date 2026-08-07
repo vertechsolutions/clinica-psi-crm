@@ -35,15 +35,23 @@ import {
 } from '@/lib/comprovante-core';
 import { deveIgnorarPorLegado, ehLegado, marcarLegado } from '@/lib/legado';
 import { hasDb } from '@/lib/db';
+import { allowlist, atende } from '@/lib/allowlist';
+import { semEmoji } from '@/lib/emoji';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** Fallback quando a transcrição falha ou o tipo de mídia não é suportado. */
+/**
+ * Fallback quando a transcrição falha ou o tipo de mídia não é suportado.
+ *
+ * Sem emoji por decisão da Bruna (06/08/2026) — e o `semEmoji` no call site é a
+ * rede, não a origem: sem ele, um dia alguém reintroduz a carinha ao editar o
+ * texto e nada avisa.
+ */
 const PEDE_TEXTO =
-  'Oi! Não consegui ouvir seu áudio direito. Pode me mandar por texto o que você precisa? Assim consigo te ajudar melhor 🙂';
+  'Oi! Não consegui ouvir seu áudio direito. Pode me mandar por texto o que você precisa? Assim consigo te ajudar melhor.';
 const PEDE_TEXTO_OUTRAS_MIDIAS =
-  'Oi! Aqui pelo WhatsApp consigo te ajudar melhor por texto. Pode me contar por escrito? 🙂';
+  'Oi! Aqui pelo WhatsApp consigo te ajudar melhor por texto. Pode me contar por escrito?';
 const FALHA_TEMPORARIA =
   'Tive uma instabilidade aqui agora. Pode me mandar a mensagem de novo em alguns segundos?';
 
@@ -51,7 +59,7 @@ const FALHA_TEMPORARIA =
 async function sendFallback(to: string, err: unknown): Promise<void> {
   console.error('[webhook] erro ao gerar resposta', err);
   try {
-    await sendText(to, FALHA_TEMPORARIA);
+    await sendText(to, semEmoji(FALHA_TEMPORARIA));
   } catch (fallbackErr) {
     console.error('[webhook] erro ao enviar fallback', fallbackErr);
   }
@@ -68,26 +76,6 @@ function alertRecipients(): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-/**
- * Trava de estreia. O transporte agora é o WhatsApp PROFISSIONAL da Bruna, que
- * já tem conversas em andamento — sem isto a Camila responderia todo mundo que
- * escrever, inclusive contato pessoal e paciente que já está sendo atendido por
- * ela. Com `WA_ALLOWLIST` preenchida, só esses números falam com a IA; os outros
- * são ignorados por completo (nem gravamos — dado de terceiro que não pediu
- * triagem não entra no banco). Vazia = atende todo mundo (operação normal).
- */
-function allowlist(): string[] {
-  return (process.env.WA_ALLOWLIST || '')
-    .split(',')
-    .map((s) => s.replace(/\D/g, ''))
-    .filter(Boolean);
-}
-
-function atende(waId: string): boolean {
-  const lista = allowlist();
-  return lista.length === 0 || lista.includes(waId);
 }
 
 /** LGPD: log nunca leva o telefone inteiro — só os 4 últimos, pra diagnóstico. */
@@ -288,7 +276,7 @@ export async function POST(req: Request): Promise<Response> {
         await markReadAndType(msg);
         if (paused) return; // pausada: nem pede texto, deixa quieto
         const fallback = msg.tipo === 'audio' ? PEDE_TEXTO : PEDE_TEXTO_OUTRAS_MIDIAS;
-        const id = await sendText(from, fallback);
+        const id = await sendText(from, semEmoji(fallback));
         if (id) await registrarEnvios([id]);
         return;
       }

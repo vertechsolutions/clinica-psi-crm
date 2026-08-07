@@ -74,7 +74,7 @@ export async function recordAssistantMessage(
   return res.rowCount === 1;
 }
 
-async function loadHistory(waId: string): Promise<MensagemHistorico[]> {
+export async function loadHistory(waId: string): Promise<MensagemHistorico[]> {
   const { rows } = await query<{ role: Role; content: string; created_at: Date }>(
     `SELECT role, content, created_at FROM wa_messages
       WHERE wa_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2`,

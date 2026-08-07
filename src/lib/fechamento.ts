@@ -3,6 +3,7 @@
 // texto é da clínica e cada item precisa sair como UMA bolha curta (o modelo
 // juntava tudo num parágrafo só). Funções puras.
 import { splitReply } from './split-message';
+import { semEmoji } from './emoji';
 
 /** Mensagem que entrega o formulário (o link é concatenado). */
 export const FECHAMENTO_FORMULARIO =
@@ -37,7 +38,15 @@ export function mensagensDeFechamento(formUrl: string): string[] {
  * (handoff) ou a resposta do modelo repartida em bolhas. Chamado pelo webhook
  * DEPOIS dos backstops — se algum deles zerou `enviarForm`, nenhuma palavra do
  * fechamento sai. Os harnesses chamam a mesma função (fidelidade).
+ *
+ * O `semEmoji` no fim vale pros dois caminhos: a resposta do modelo (que às vezes
+ * insiste na carinha mesmo com o prompt limpo) e as bolhas oficiais (hoje já
+ * limpas — aqui é defesa contra edição futura). Filtrar DEPOIS do splitReply é de
+ * propósito: o split usa a linha em branco pra decidir a bolha, e uma linha que
+ * só tinha emoji não pode virar uma bolha vazia — vira string vazia, que o
+ * `sendTextSequence` ignora.
  */
 export function bolhasDoTurno(turno: { enviarForm: boolean; resposta: string }, formUrl: string): string[] {
-  return turno.enviarForm ? mensagensDeFechamento(formUrl) : splitReply(turno.resposta);
+  const bolhas = turno.enviarForm ? mensagensDeFechamento(formUrl) : splitReply(turno.resposta);
+  return bolhas.map(semEmoji).filter(Boolean);
 }

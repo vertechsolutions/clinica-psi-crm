@@ -14,10 +14,22 @@ import { query } from './db';
 import { recordAssistantMessage, registrarEnvios } from './conversation';
 import { classificarNovos } from './legado';
 import { precisaTemplate, sendText, sendTemplate } from './whatsapp';
+import { semEmoji } from './emoji';
 
 /** Mensagem 7 do FAQ da Bruna — reengajamento dentro da janela de 24h. */
 export const MENSAGEM_RETENCAO =
   'Olá! Não tive seu retorno, e estou passando para saber se você ainda deseja agendar sua primeira sessão. Podemos continuar o atendimento?';
+
+/**
+ * O reengajamento é o único texto que chega ao paciente FORA do webhook: sai
+ * daqui, pelo cron de 1h, direto pelo `sendText`. Nenhum filtro do fluxo de turno
+ * o alcança, então a rede de emoji tem que estar neste módulo.
+ *
+ * O mesmo texto filtrado vai pro envio E pro histórico. Se divergissem, o modelo
+ * leria no turno seguinte uma mensagem que o paciente nunca recebeu — e o
+ * `[ONDE PARAMOS]` passaria a mentir.
+ */
+const RETENCAO = semEmoji(MENSAGEM_RETENCAO);
 
 const JANELA_MS = 24 * 60 * 60 * 1000;
 const MAX_FOLLOWUPS = 2; // no máximo 2 reengajamentos por lead
@@ -122,7 +134,7 @@ export async function runFollowup(now = new Date()): Promise<number> {
       // atendimento humano e pausaria justo o lead que a gente acabou de acordar
       let enviadoId: string | null = null;
       if (canal === 'freeform') {
-        enviadoId = await sendText(lead.wa_id, MENSAGEM_RETENCAO);
+        enviadoId = await sendText(lead.wa_id, RETENCAO);
       } else if (templateName) {
         enviadoId = await sendTemplate(lead.wa_id, templateName);
       } else {
@@ -134,7 +146,7 @@ export async function runFollowup(now = new Date()): Promise<number> {
       // precisa ver a pergunta do follow-up no contexto. O corpo do template
       // aprovado é a própria MENSAGEM_RETENCAO, então vale pros dois canais.
       try {
-        await recordAssistantMessage(lead.wa_id, MENSAGEM_RETENCAO);
+        await recordAssistantMessage(lead.wa_id, RETENCAO);
       } catch (e) {
         console.error(`[followup] falha ao gravar follow-up no histórico de ${mask(lead.wa_id)}`, e);
       }
