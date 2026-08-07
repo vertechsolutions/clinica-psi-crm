@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/test-all.ts",
     "test:db": "tsx --env-file=.env.local scripts/test-db-live.ts",
+    "test:claim": "tsx --env-file=.env.local scripts/test-claim-live.ts",
     "test:webhook": "tsx --env-file=.env.local scripts/test-webhook-http.ts"
   },
   "engines": {

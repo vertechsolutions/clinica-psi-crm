@@ -30,7 +30,17 @@ const TOKEN = process.env.ZAPI_INSTANCE_TOKEN;
 const CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN;
 const WEBHOOK_SECRET = process.env.ZAPI_WEBHOOK_SECRET;
 
-const BASE = `https://api.z-api.io/instances/${INSTANCE}/token/${TOKEN}`;
+/**
+ * A origem sai para env por causa dos testes: era uma const de módulo fixa, e sem
+ * poder apontá-la para um stub local NENHUM teste conseguia provar "a Camila
+ * enviou UMA vez" — que é o critério de aceite da leva do debounce. O
+ * `test-webhook-http` só funciona hoje porque todos os cenários dele foram
+ * escolhidos para não chegar a enviar.
+ *
+ * Em produção nada muda: sem a env, é a URL oficial da Z-API.
+ */
+const BASE_ORIGEM = process.env.ZAPI_BASE_URL || 'https://api.z-api.io';
+const BASE = `${BASE_ORIGEM}/instances/${INSTANCE}/token/${TOKEN}`;
 const canSend = Boolean(INSTANCE && TOKEN);
 
 /** "digitando" antes de cada bolha (1–15s). 1s dá o indicador sem atrasar. */

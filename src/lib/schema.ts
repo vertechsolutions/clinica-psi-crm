@@ -51,6 +51,17 @@ export async function initSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS followup_last_at  TIMESTAMPTZ;
     `);
 
+    // Claim de turno: a trava que garante que dois turnos concorrentes do mesmo
+    // número nunca respondam os dois (o bug do print de 06/08 — o mesmo par de
+    // bolhas enviado duas vezes). `turno_token` é a identidade de quem detém o
+    // turno; `turno_ate` é só o teto de segurança que permite reivindicar um
+    // claim de um processo que morreu. Ver `turno-claim.ts`. Idempotente.
+    await client.query(`
+      ALTER TABLE wa_conversations
+        ADD COLUMN IF NOT EXISTS turno_ate   TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS turno_token TEXT;
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS wa_messages (
         id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
