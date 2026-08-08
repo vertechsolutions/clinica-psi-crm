@@ -4,7 +4,6 @@ import {
   downloadMedia,
   markReadAndType,
   parseWebhook,
-  providerNome,
   sendText,
   verifyChallenge,
   type MensagemRecebida,
