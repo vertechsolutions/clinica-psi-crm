@@ -13,7 +13,7 @@
  * Rodar:  npm run test:webhook
  */
 import assert from 'node:assert';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 
 const TEST_URL = process.env.TEST_DATABASE_URL?.trim();
 if (!TEST_URL) {
@@ -54,6 +54,21 @@ const post = (body: unknown, comSegredo = true) =>
 
 const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * `proc.kill()` sozinho não serve no Windows: com `shell: true` quem morre é o
+ * `cmd.exe`, e o `next dev` neto fica vivo. O Next 16 recusa um SEGUNDO servidor
+ * de dev no mesmo diretório ("Another next dev server is already running"), então
+ * um servidor vazado aqui derruba a próxima suíte HTTP — o `test:turno` — com
+ * uma mensagem que não tem nada a ver com o que ela testa.
+ */
+function matar(proc: ChildProcess): void {
+  if (process.platform === 'win32' && proc.pid) {
+    spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+    return;
+  }
+  proc.kill();
+}
+
 async function subirServidor(): Promise<ChildProcess> {
   const proc = spawn('npx', ['next', 'dev', '-p', String(PORTA)], {
     env,
@@ -69,7 +84,7 @@ async function subirServidor(): Promise<ChildProcess> {
       /* ainda subindo */
     }
   }
-  proc.kill();
+  matar(proc);
   throw new Error('o servidor não subiu em 60s');
 }
 
@@ -250,7 +265,7 @@ async function main() {
     console.log('test-webhook-http: todos os asserts passaram ✔');
   } finally {
     process.env.WA_LEGADO_CHAVE = CHAVE_LEGADO;
-    proc.kill();
+    matar(proc);
     await limpar();
     await query(`DELETE FROM wa_outbound WHERE wamid IN ('NOSSO1')`);
     await query(`DELETE FROM app_config WHERE key LIKE 'legado_%' OR key = 'camila_muda'`);

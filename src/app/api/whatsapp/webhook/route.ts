@@ -5,29 +5,24 @@ import {
   markReadAndType,
   parseWebhook,
   providerNome,
-  sendInternalAlert,
   sendText,
-  sendTextSequence,
   verifyChallenge,
   type MensagemRecebida,
 } from '@/lib/whatsapp';
 import {
-  computeReply,
   foiNossoEnvio,
   isPaused,
   pauseConversation,
-  persistReply,
   recordAssistantMessage,
   recordUserMessage,
   registrarEnvios,
   temHistorico,
 } from '@/lib/conversation';
-import { bolhasDoTurno } from '@/lib/fechamento';
+import { registrarMensagemDoTurno } from '@/lib/turno';
 import { transcribeAudio } from '@/lib/transcribe';
 import { analisarComprovante } from '@/lib/comprovante';
 import {
   chaveEsperada,
-  mensagemAnexoInvalido,
   montarMarcadorComprovante,
   verificarDestinatario,
   type AnaliseComprovante,
@@ -52,31 +47,6 @@ const PEDE_TEXTO =
   'Oi! Não consegui ouvir seu áudio direito. Pode me mandar por texto o que você precisa? Assim consigo te ajudar melhor.';
 const PEDE_TEXTO_OUTRAS_MIDIAS =
   'Oi! Aqui pelo WhatsApp consigo te ajudar melhor por texto. Pode me contar por escrito?';
-const FALHA_TEMPORARIA =
-  'Tive uma instabilidade aqui agora. Pode me mandar a mensagem de novo em alguns segundos?';
-
-/** Envia o aviso de instabilidade quando a geração da resposta falha (best-effort). */
-async function sendFallback(to: string, err: unknown): Promise<void> {
-  console.error('[webhook] erro ao gerar resposta', err);
-  try {
-    await sendText(to, semEmoji(FALHA_TEMPORARIA));
-  } catch (fallbackErr) {
-    console.error('[webhook] erro ao enviar fallback', fallbackErr);
-  }
-}
-
-/**
- * Números que recebem alerta interno quando o formulário é enviado (fase de
- * testes). Ficam em env pra não hardcodar. Comma-separated, formato E.164 sem
- * "+" (ex.: "5527981178233,5549999551051").
- */
-function alertRecipients(): string[] {
-  const raw = process.env.NOTIFY_ALERT_NUMBERS || '';
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
 
 /** LGPD: log nunca leva o telefone inteiro — só os 4 últimos, pra diagnóstico. */
 const mascarar = (waId: string) => `***${waId.slice(-4)}`;
@@ -291,122 +261,31 @@ export async function POST(req: Request): Promise<Response> {
         return;
       }
 
+      // Fica POR MENSAGEM de propósito. Na Z-API isto só marca lida (o
+      // "digitando" viaja no `delayTyping` do envio) e na Meta o indicador expira
+      // em 25s — chamar de novo apenas o renova. Segurar até o fim da janela
+      // deixaria o paciente vendo a mensagem como não-lida por 8s, que é o
+      // oposto do que o debounce existe para melhorar.
       await markReadAndType(msg);
-      let turno: Awaited<ReturnType<typeof computeReply>>;
-      try {
-        turno = await computeReply(from, nome);
-      } catch (err) {
-        await sendFallback(from, err);
-        return;
-      }
-      // Backstop: o modelo marcou enviarForm mas a análise do anexo deste turno
-      // diz que NÃO é comprovante válido (chave de outro destinatário ou não-
-      // comprovante) → suprime o handoff por código, independente do prompt.
-      const anexoInvalido =
-        comprovante && (comprovante.verificacao === 'nao_confere' || comprovante.analise?.ehComprovante === false);
-      if (turno.enviarForm && anexoInvalido) {
-        console.warn(
-          `[comprovante] enviarForm suprimido: anexo inválido (verificacao=${comprovante.verificacao}, ehComprovante=${comprovante.analise?.ehComprovante}).`,
-        );
-        // Além de suprimir o handoff, TROCA a resposta pelo texto da clínica: no
-        // turno do comprovante o prompt v18 manda o modelo não redigir nada ("o
-        // que você redigir é descartado"), então o rascunho que sobraria é uma
-        // frase trivial (ou o "Desculpa, pode repetir?") — justo quando o
-        // paciente precisa saber que o Pix foi pra chave errada.
-        const motivo = comprovante.verificacao === 'nao_confere' ? 'nao_confere' : 'nao_comprovante';
-        turno = {
-          ...turno,
-          enviarForm: false,
-          resposta: mensagemAnexoInvalido(motivo, process.env.PIX_INFO ?? ''),
-        };
-      }
-      // Entrega em bolhas: se a resposta trouxe parágrafos ou ficou longa, manda
-      // 2–3 mensagens seguidas (UX de conversa). Se falhar, lança e não persiste.
-      // A decisão do que sai fica AQUI, depois do backstop de comprovante: se ele
-      // zerou enviarForm, nenhuma palavra do fechamento oficial é enviada.
-      const bolhas = bolhasDoTurno(turno, process.env.FORM_URL ?? '');
-      if (turno.enviarForm && !process.env.FORM_URL) {
-        console.warn('[webhook] enviarForm=true sem FORM_URL — o fechamento vai sem o link.');
-      }
-      await sendTextSequence(from, bolhas, { onSent: (id) => registrarEnvios([id]) });
-      try {
-        // grava o que o paciente REALMENTE recebeu (no handoff, o texto oficial)
-        await persistReply(from, nome, { ...turno, resposta: bolhas.join('\n\n') });
-      } catch (err) {
-        console.error('[webhook] erro ao persistir resposta', err);
-      }
 
-      // Handoff: IA sinalizou envio do form → pausa + notifica equipe.
-      if (turno.enviarForm) {
-        await pauseConversation(from);
-        await notifyTeam(from, nome, turno, comprovante);
-      }
+      // Daqui em diante a responsabilidade é do TURNO, não da mensagem. Este
+      // `await` é o que mantém a request viva: a doc do Next (16.2.7,
+      // `functions/after.md`) garante a sobrevivência pela promise do callback
+      // (`waitUntil`), não por um `setTimeout` solto dentro dele. A agenda só
+      // resolve esta promise quando o turno terminou ou quando uma request mais
+      // nova assumiu o buffer deste número — trocar por fire-and-forget faria o
+      // Next descartar a resposta do paciente no meio.
+      //
+      // O print de 06/08/2026 morre aqui: três mensagens seguidas viram uma
+      // janela só, e o claim do Postgres cobre o que a memória de um processo
+      // não vê.
+      await registrarMensagemDoTurno({ waId: from, nome, comprovante });
     } catch (err) {
       console.error('[webhook] erro ao processar mensagem', err);
     }
   });
 
   return new Response('ok', { status: 200 });
-}
-
-/** Linha do comprovante no alerta: valor lido + veredito da chave. */
-function linhaComprovante(
-  c?: { analise: AnaliseComprovante | null; verificacao: VerificacaoDestinatario },
-): string {
-  if (!c) return '💰 Comprovante: recebido em turno anterior — conferir na conversa.';
-  if (!c.analise) return '💰 Comprovante: ⚠️ SEM validação automática — conferir valor e destinatário manualmente.';
-  const v = c.analise.valor != null ? `R$ ${c.analise.valor.toFixed(2).replace('.', ',')}` : 'valor não legível';
-  const chave =
-    c.verificacao === 'confere'
-      ? 'chave confere ✔'
-      : c.verificacao === 'nao_confere'
-        ? 'CHAVE NÃO CONFERE ⚠️'
-        : 'chave não confirmada ⚠️';
-  return `💰 Comprovante: ${v} (${chave})`;
-}
-
-/**
- * Notificação de trabalho pra Bruna Amorim (psicóloga, quem intervém após o
- * handoff) + dev, via NOTIFY_ALERT_NUMBERS: ficha do paciente + status do
- * comprovante + checklist (pagamento → formulário → PsicoManager).
- */
-async function notifyTeam(
-  waId: string,
-  nome: string | undefined,
-  turno: Awaited<ReturnType<typeof computeReply>>,
-  comprovante?: { analise: AnaliseComprovante | null; verificacao: VerificacaoDestinatario },
-): Promise<void> {
-  const recipients = alertRecipients();
-  if (recipients.length === 0) {
-    console.warn('[webhook] NOTIFY_ALERT_NUMBERS não configurado — sem alerta.');
-    return;
-  }
-  const lead = turno.lead;
-  const linhas = [
-    '🩵 *Camila (IA) concluiu mais uma triagem automática!*',
-    '',
-    `👤 Paciente: ${lead.nome || nome || '(sem nome)'}`,
-    `📱 WhatsApp: +${waId}`,
-    lead.telefone ? `☎️ Telefone informado: ${lead.telefone}` : null,
-    lead.email ? `✉️ E-mail: ${lead.email}` : null,
-    lead.disponibilidade ? `🗓️ Horário/disponibilidade: ${lead.disponibilidade}` : null,
-    lead.preferenciaAbordagem ? `🧠 Preferência: ${lead.preferenciaAbordagem}` : null,
-    lead.resumo ? `📝 Queixa: ${lead.resumo}` : lead.motivacao ? `📝 Motivação: ${lead.motivacao}` : null,
-    linhaComprovante(comprovante),
-    '📋 Formulário de triagem enviado ao paciente.',
-    '',
-    '*Próximos passos:*',
-    '1️⃣ Conferir o pagamento na conta',
-    '2️⃣ Confirmar o preenchimento do formulário',
-    '3️⃣ Ajustar o horário no PsicoManager',
-    '',
-    'A IA está pausada nesse número — a conversa agora é de vocês. 💙',
-  ].filter(Boolean) as string[];
-  const body = linhas.join('\n');
-  // o alerta também sai do número da clínica: registra os ids pra que o eco não
-  // seja lido como "a equipe assumiu a conversa" com a Bruna ou com o dev.
-  const ids = await Promise.all(recipients.map((to) => sendInternalAlert(to, body)));
-  await registrarEnvios(ids.filter((id): id is string => Boolean(id)));
 }
 
 // O payload cru (Meta ou Z-API) é problema do provider: aqui só circula a

@@ -28,6 +28,7 @@ import {
   type ComprovanteDoTurno,
   type ResultadoExecucao,
 } from '../src/lib/turno-agenda';
+import type { VerificacaoDestinatario } from '../src/lib/comprovante-core';
 import { TURNO_TTL_SEGUNDOS } from '../src/lib/turno-claim';
 
 /** deixa terminar o que está em microtask (os `await` de dentro do turno). */
@@ -71,7 +72,17 @@ function comPortao(b: ReturnType<typeof criarBancada>) {
   return (r: ResultadoExecucao) => abrir(r);
 }
 
-const comp = (ehComprovante: boolean | null, verificacao: string, valor: number | null = null): ComprovanteDoTurno => ({
+/**
+ * `verificacao` é o tipo fechado de `comprovante-core` (`confere` /
+ * `nao_confere` / `inconclusivo`) — os mesmos três valores que o `extractText`
+ * do webhook produz. Um rótulo inventado aqui deixaria o teste exercitando um
+ * estado que a produção nunca cria.
+ */
+const comp = (
+  ehComprovante: boolean | null,
+  verificacao: VerificacaoDestinatario,
+  valor: number | null = null,
+): ComprovanteDoTurno => ({
   analise: { ehComprovante, valor },
   verificacao,
 });
@@ -176,7 +187,7 @@ async function main() {
   {
     const b = criarBancada();
     const pago = comp(true, 'confere', 200);
-    const selfie = comp(false, 'sem_comprovante');
+    const selfie = comp(false, 'inconclusivo');
     rastrear(b.agenda.registrar({ waId: 'A', nome: 'Ana', comprovante: pago }));
     rastrear(b.agenda.registrar({ waId: 'A', comprovante: selfie }));
     rastrear(b.agenda.registrar({ waId: 'A', nome: 'Ana Paula' }));
@@ -188,7 +199,7 @@ async function main() {
 
     // teto de anexos por janela: lead que spamma foto não faz a memória crescer
     const b2 = criarBancada();
-    for (let i = 0; i < 12; i++) rastrear(b2.agenda.registrar({ waId: 'A', comprovante: comp(false, `foto-${i}`) }));
+    for (let i = 0; i < 12; i++) rastrear(b2.agenda.registrar({ waId: 'A', comprovante: comp(false, 'inconclusivo') }));
     await b2.avancar(8_000);
     assert.strictEqual(b2.chamadas[0].comprovantes.length, 10, 'a janela tem teto de anexos acumulados');
   }
@@ -304,7 +315,7 @@ async function main() {
     const abrir = comPortao(b);
 
     const antes = comp(true, 'confere', 200);
-    const durante = comp(false, 'sem_comprovante');
+    const durante = comp(false, 'inconclusivo');
     const p1 = rastrear(b.agenda.registrar({ waId: 'A', comprovante: antes }));
     await b.avancar(8_000);
     assert.strictEqual(b.agenda.estado().pendentes, 0, 'o pendente sai da agenda ANTES de o turno rodar');
@@ -330,7 +341,7 @@ async function main() {
     const abrir = comPortao(b);
 
     const antes = comp(true, 'confere', 200);
-    const durante = comp(false, 'sem_comprovante');
+    const durante = comp(false, 'inconclusivo');
     const p1 = rastrear(b.agenda.registrar({ waId: 'A', nome: 'Ana', comprovante: antes }));
     await b.avancar(8_000);
     // a mensagem nova traz nome PRÓPRIO: é o caso que separa "a janela nova
@@ -548,7 +559,7 @@ async function main() {
 
   // ── escolherComprovante: o comprovante que vale para o turno ───────────────
   const pagou = comp(true, 'confere', 200);
-  const selfie = comp(false, 'sem_comprovante');
+  const selfie = comp(false, 'inconclusivo');
   const outraChave = comp(true, 'nao_confere', 200);
   const naoAnalisado: ComprovanteDoTurno = { analise: null, verificacao: 'inconclusivo' };
 

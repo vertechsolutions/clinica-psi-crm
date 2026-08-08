@@ -13,12 +13,26 @@
  * rajada vira um `executar` só, com tudo junto.
  */
 
+import type { VerificacaoDestinatario } from './comprovante-core';
+
 /** O que o agendador devolve. Opaco de propósito: nos testes é um número. */
 export type TimerId = unknown;
 
+/**
+ * O anexo de uma mensagem da janela, no mínimo que o turno precisa: o backstop
+ * de comprovante só olha `ehComprovante` e `verificacao`, e o alerta de equipe
+ * também o `valor`. Estrutural em vez de importar a `AnaliseComprovante` inteira
+ * porque este módulo é puro e não tem por que conhecer OCR.
+ *
+ * `verificacao` é o TIPO FECHADO de `comprovante-core`, nunca `string`: um
+ * `'nao_confer'` datilografado no backstop do `turno.ts` passaria despercebido
+ * no compilador e liberaria o handoff de quem mandou Pix para a chave errada.
+ * O import é só de tipo (some no build) e `comprovante-core` não importa nada,
+ * então a pureza deste arquivo continua de pé.
+ */
 export interface ComprovanteDoTurno {
   analise: { ehComprovante?: boolean | null; valor?: number | null } | null;
-  verificacao: string;
+  verificacao: VerificacaoDestinatario;
 }
 
 export interface EntradaDeTurno {
