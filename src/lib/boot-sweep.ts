@@ -121,30 +121,47 @@ async function continuaPendente(waId: string): Promise<boolean> {
 }
 
 /**
- * Solta os claims que sobraram do processo anterior.
+ * Solta os claims EXPIRADOS. Só eles, e o `AND turno_ate < now()` é a linha mais
+ * importante deste arquivo.
  *
- * Um turno que morreu no meio deixa `turno_ate` no futuro (até 90s) e o número
- * mudo até o TTL vencer — inclusive para a varredura, que desiste em silêncio
- * quando o claim falha. Um boot novo não herda turno em andamento nenhum, então
- * a limpeza é segura por definição no caso normal.
+ * `turno_ate` no futuro é turno VIVO, e apagá-lo mata o turno: o `aindaTitular`
+ * do `turno.ts` é checado imediatamente antes do primeiro byte e falha fechado
+ * de propósito, então o turno que perdeu o token aborta o envio em silêncio e o
+ * lead não recebe nada. Não é hipótese — a primeira versão deste arquivo zerava
+ * todo claim no boot e o `test-turno-concorrencia` pegou: "esperava 1 resposta,
+ * veio 0".
  *
- * Ressalva honesta: num deploy com os dois containers sobrepostos, isto tira a
- * titularidade de um turno que o container ANTIGO ainda está gerando. Ele não
- * responde duas vezes por causa disso — o `aindaTitular` do `turno.ts` é
- * checado imediatamente antes do primeiro byte e falha fechado, então o antigo
- * aborta o envio e quem responde é este processo. O resíduo é a fresta entre
- * aquele check e o envio, de poucos segundos.
+ * E não é o vizinho de deploy que corre esse risco: é o PRÓPRIO processo. A
+ * varredura é fire-and-forget de propósito (não pode segurar o health check), o
+ * que significa que ela roda com o servidor JÁ aceitando tráfego — um turno que
+ * pegou o claim nesse intervalo teria o token apagado no meio do `computeReply`.
+ * A premissa "um boot novo não herda turno em andamento" era falsa exatamente
+ * por causa disso.
+ *
+ * Claim expirado, ao contrário, é de processo morto por definição: o
+ * `claimTurno` já o trata como reivindicável, então soltá-lo aqui é higiene, não
+ * corrida.
+ *
+ * RESÍDUO ACEITO, dito na cara: um processo que morreu 5s atrás deixa o claim
+ * válido por mais ~85s. A varredura vai desistir em silêncio naquele número, e
+ * ele fica sem resposta até o lead escrever de novo ou até o próximo boot. É o
+ * comportamento que o `TURNO_TTL_SEGUNDOS` já foi desenhado para governar
+ * ("só existe para que um claim de um processo que morreu no meio do turno volte
+ * a ser reivindicável"). Uma segunda passada da varredura depois do TTL
+ * fecharia essa janela, e é escopo novo — não está implementado.
  *
  * O UPDATE não encosta em `updated_at` de propósito, pelo mesmo motivo listado
  * no `turno-claim.ts`: aquela coluna é o relógio do follow-up, da retenção LGPD
  * e da ordenação do painel.
  */
-async function soltarClaimsPresos(): Promise<number> {
+async function soltarClaimsExpirados(): Promise<number> {
   const r = await query(
-    `UPDATE wa_conversations SET turno_ate = NULL, turno_token = NULL WHERE turno_ate IS NOT NULL`,
+    `UPDATE wa_conversations
+        SET turno_ate = NULL, turno_token = NULL
+      WHERE turno_ate IS NOT NULL AND turno_ate < now()`,
   );
   const n = r.rowCount ?? 0;
-  if (n > 0) console.log(`[varredura] ${n} claim(s) de turno do processo anterior liberado(s).`);
+  if (n > 0) console.log(`[varredura] ${n} claim(s) de turno expirado(s) liberado(s).`);
   return n;
 }
 
@@ -207,7 +224,7 @@ async function reprocessar(p: Pendente, rodar: ProcessarTurno): Promise<boolean>
  */
 export async function varrerPendentes(processar?: ProcessarTurno): Promise<number> {
   try {
-    await soltarClaimsPresos();
+    await soltarClaimsExpirados();
     const { lista, truncada } = await listarPendentes();
     if (lista.length === 0) return 0;
     if (truncada) {

@@ -175,24 +175,57 @@ async function main() {
   await marcarLegadoEmLote([WA_LEGADO], 'manual');
   __resetCacheLegado();
 
-  // ── claim preso do processo anterior não pode emudecer o número ───────────
-  // Um turno que morreu no meio deixa turno_ate no futuro; sem soltá-lo, a
-  // varredura desistiria em silêncio e o lead esperaria o TTL de 90s — só que
-  // ninguém varre de novo antes do próximo boot.
+  // ── claim VIVO é intocável ────────────────────────────────────────────────
+  // O assert que faltava na primeira versão desta suíte, e que custou uma
+  // regressão: ela zerava TODO claim no boot, e o `test-turno-concorrencia`
+  // pegou com "esperava 1 resposta(s) da Camila, veio 0". A varredura é
+  // fire-and-forget, então roda com o servidor JÁ aceitando tráfego — um turno
+  // que pegou o claim segundos antes perde o token no meio do computeReply, o
+  // `aindaTitular` falha fechado e o lead não recebe nada.
+  //
+  // O cenário é de propósito num número que a varredura NEM ESTÁ CAÇANDO
+  // (WA_RESPONDIDO já foi respondido): o único jeito de o claim dele morrer é o
+  // UPDATE global, que é exatamente a forma da regressão.
+  const VIVO = 'token-de-turno-vivo';
   await query(
     `UPDATE wa_conversations
-        SET turno_ate = now() + interval '60 seconds', turno_token = 'token-do-processo-morto'
+        SET turno_ate = now() + interval '60 seconds', turno_token = $2
+      WHERE wa_id = $1`,
+    [WA_RESPONDIDO, VIVO],
+  );
+  await varrerComEspiao();
+  const { rows: vivo } = await query<{ turno_ate: Date | null; turno_token: string | null }>(
+    `SELECT turno_ate, turno_token FROM wa_conversations WHERE wa_id = $1`,
+    [WA_RESPONDIDO],
+  );
+  assert.strictEqual(
+    vivo[0].turno_token,
+    VIVO,
+    'a varredura NÃO pode tirar a titularidade de um turno vivo (era a regressão do test:turno)',
+  );
+  assert.ok(vivo[0].turno_ate !== null, 'e nem o prazo dele');
+
+  // ── claim EXPIRADO é solto ────────────────────────────────────────────────
+  // Esse é de processo morto por definição — o claimTurno já o trataria como
+  // reivindicável. Sem soltá-lo, a varredura desistiria em silêncio e o lead
+  // esperaria o TTL, só que ninguém varre de novo antes do próximo boot.
+  await query(
+    `UPDATE wa_conversations
+        SET turno_ate = now() - interval '1 second', turno_token = 'token-do-processo-morto'
       WHERE wa_id = $1`,
     [WA_PENDENTE],
   );
-  const comClaimPreso = (await varrerComEspiao()).vistos.map((v) => v.waId);
-  assert.ok(comClaimPreso.includes(WA_PENDENTE), 'claim preso do processo anterior é liberado no boot');
+  const comClaimExpirado = (await varrerComEspiao()).vistos.map((v) => v.waId);
+  assert.ok(comClaimExpirado.includes(WA_PENDENTE), 'claim expirado não emudece o número na varredura');
   const { rows: claim } = await query<{ turno_ate: Date | null; turno_token: string | null }>(
     `SELECT turno_ate, turno_token FROM wa_conversations WHERE wa_id = $1`,
     [WA_PENDENTE],
   );
-  assert.strictEqual(claim[0].turno_ate, null, 'o claim antigo foi zerado');
+  assert.strictEqual(claim[0].turno_ate, null, 'o claim expirado foi zerado');
   assert.strictEqual(claim[0].turno_token, null, 'e o token junto');
+  await query(`UPDATE wa_conversations SET turno_ate = NULL, turno_token = NULL WHERE wa_id = $1`, [
+    WA_RESPONDIDO,
+  ]);
 
   // ── nunca lança para fora ────────────────────────────────────────────────
   // É chamada fire-and-forget no boot: uma promise rejeitada sem handler derruba
