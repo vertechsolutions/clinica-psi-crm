@@ -13,12 +13,14 @@
  * `extractText`, dedup por wamid e `markReadAndType`, que continuam POR
  * MENSAGEM.
  */
-import { computeReply, pauseConversation, persistReply, registrarEnvios } from './conversation';
+import { computeReply, loadHistory, pauseConversation, persistReply, registrarEnvios } from './conversation';
 import { bolhasDoTurno } from './fechamento';
 import { sendInternalAlert, sendText, sendTextSequence } from './whatsapp';
+import { pareceBot, ultimosTurnosDoLead } from './anti-bot';
 import { mensagemAnexoInvalido } from './comprovante-core';
 import { semEmoji } from './emoji';
 import { aindaTitular, claimTurno, releaseTurno } from './turno-claim';
+import type { MensagemHistorico } from './retomada';
 import {
   criarAgenda,
   escolherComprovante,
@@ -174,9 +176,10 @@ async function rodarSobClaim(
 }
 
 /**
- * A sequência do turno, já com a vez garantida: gera a resposta, aplica o
- * backstop de comprovante, reconfere a titularidade, envia, persiste o que o
- * paciente REALMENTE recebeu e, no handoff, pausa e chama a equipe.
+ * A sequência do turno, já com a vez garantida: descarta o turno se do outro
+ * lado houver um robô, gera a resposta, aplica o backstop de comprovante,
+ * reconfere a titularidade, envia, persiste o que o paciente REALMENTE recebeu
+ * e, no handoff, pausa e chama a equipe.
  */
 async function desfechoDoTurno(
   waId: string,
@@ -184,6 +187,20 @@ async function desfechoDoTurno(
   nome: string | undefined,
   comprovante: ComprovanteDoTurno | undefined,
 ): Promise<void> {
+  // Anti-bot ANTES do `computeReply`: um turno que vai terminar em silêncio não
+  // pode custar duas chamadas ao Gemini — decidir depois seria pagar justamente
+  // pelo loop que esta defesa existe para cortar.
+  //
+  // Sair por aqui é `return` seco: quem chama (`rodarSobClaim`) libera o claim e
+  // acorda a agenda no `finally`, então este caminho não deixa o número preso.
+  const historico = await historicoParaAntiBot(waId);
+  if (historico && pareceBot(historico)) {
+    console.warn(`[anti-bot] ${mascarar(waId)}: 3 turnos idênticos do lead — conversa pausada, sem resposta.`);
+    await pauseConversation(waId);
+    await alertarSuspeitaDeBot(waId, nome, ultimosTurnosDoLead(historico));
+    return;
+  }
+
   let turno: Awaited<ReturnType<typeof computeReply>>;
   try {
     turno = await computeReply(waId, nome);
@@ -256,6 +273,30 @@ async function desfechoDoTurno(
   if (turno.enviarForm) {
     await pauseConversation(waId);
     await notifyTeam(waId, nome, turno, comprovante);
+  }
+}
+
+/**
+ * O histórico do número, lido para o anti-bot e só para ele — é o único
+ * consumidor de histórico deste arquivo, já que o `computeReply` carrega o dele
+ * por dentro. Sim, no caminho em que o anti-bot não dispara o histórico é lido
+ * duas vezes; é um SELECT de 30 linhas contra uma chamada ao Gemini, e é o preço
+ * de decidir ANTES de gastar o modelo.
+ *
+ * `null` em falha, e o turno segue NORMALMENTE. Um SELECT que caiu não é prova
+ * de robô nenhum, e tratar dúvida como suspeita calaria um paciente por causa de
+ * uma indisponibilidade do banco — a direção segura do erro está declarada no
+ * `anti-bot.ts`: deixar um bot conversar custa token, calar um paciente custa o
+ * paciente. É a assimetria OPOSTA à do `aindaTitular`, que falha fechado de
+ * propósito: lá o risco de errar é mandar a mesma bolha duas vezes, aqui é
+ * emudecer com quem está pedindo ajuda.
+ */
+async function historicoParaAntiBot(waId: string): Promise<MensagemHistorico[] | null> {
+  try {
+    return await loadHistory(waId);
+  } catch (err) {
+    console.error(`[anti-bot] histórico de ${mascarar(waId)} não carregou — seguindo o turno sem julgar`, err);
+    return null;
   }
 }
 
@@ -349,6 +390,62 @@ async function notifyTeam(
   const body = linhas.join('\n');
   // o alerta também sai do número da clínica: registra os ids pra que o eco não
   // seja lido como "a equipe assumiu a conversa" com a Bruna ou com o dev.
+  const ids = await Promise.all(recipients.map((to) => sendInternalAlert(to, body)));
+  await registrarEnvios(ids.filter((id): id is string => Boolean(id)));
+}
+
+/**
+ * Teto do trecho citado no alerta. Um turno lógico é a rajada inteira
+ * concatenada, então o texto que o robô repetiu não tem tamanho máximo — e um
+ * alerta que estoure o limite do WhatsApp não é entregue, deixando a equipe sem
+ * saber do chat que a Camila acabou de calar. Justamente o silêncio que este
+ * alerta existe para impedir.
+ */
+const MAX_TRECHO_ALERTA = 300;
+
+/** Uma linha só, legível no celular: colapsa as quebras da rajada e corta o excesso. */
+function trechoDoTurno(texto: string): string {
+  const limpo = texto.trim().replace(/\s+/g, ' ');
+  return limpo.length > MAX_TRECHO_ALERTA ? `${limpo.slice(0, MAX_TRECHO_ALERTA)}…` : limpo;
+}
+
+/**
+ * Alerta de suspeita de bot: a Camila parou de responder este número e a equipe
+ * precisa saber AGORA — se do outro lado houver gente, o lead está em silêncio
+ * até alguém reativar (pedida da Bruna, 06/08/2026).
+ *
+ * Traz os quatro elementos que a equipe julga pelo celular: o número, o motivo,
+ * as mensagens repetidas na íntegra do que couber, e o que fazer se for engano.
+ *
+ * Alerta INTERNO: os emojis ficam, como no `notifyTeam`. A regra "sem emoji" é
+ * do que chega ao PACIENTE; aqui eles são o marcador de campo que faz a Bruna
+ * achar a linha certa de relance.
+ */
+async function alertarSuspeitaDeBot(waId: string, nome: string | undefined, turnos: string[]): Promise<void> {
+  const recipients = alertRecipients();
+  if (recipients.length === 0) {
+    // A pausa já aconteceu — o loop está cortado de qualquer jeito. O que se
+    // perde aqui é o aviso, e é por isso que isto é um warn e não um debug.
+    console.warn('[anti-bot] NOTIFY_ALERT_NUMBERS não configurado — chat pausado sem avisar ninguém.');
+    return;
+  }
+  const linhas = [
+    '🤖 *Camila pausou um chat por suspeita de bot.*',
+    '',
+    `📱 WhatsApp: +${waId}`,
+    nome ? `👤 Contato: ${nome}` : null,
+    '🔁 Motivo: os 3 últimos turnos desse número chegaram com o mesmo texto. Do outro lado parece ter um robô, e continuar respondendo viraria loop.',
+    '',
+    '*As mensagens repetidas:*',
+    ...turnos.map((t) => `💬 ${trechoDoTurno(t)}`),
+    '',
+    'A IA está pausada nesse número — não sai mais nada automático por aqui.',
+    'Se for engano e tiver gente do outro lado, é só devolver a conversa pra IA no painel que a Camila volta a responder. 💙',
+  ].filter(Boolean) as string[];
+  const body = linhas.join('\n');
+  // mesmo motivo do `notifyTeam`: o alerta sai do número da clínica, e sem
+  // registrar o id o eco dele voltaria pelo webhook como "a equipe assumiu a
+  // conversa" — pausando o chat da Bruna ou do dev.
   const ids = await Promise.all(recipients.map((to) => sendInternalAlert(to, body)));
   await registrarEnvios(ids.filter((id): id is string => Boolean(id)));
 }
