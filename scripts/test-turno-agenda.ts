@@ -57,6 +57,20 @@ function silenciarErros() {
   };
 }
 
+/**
+ * Deixa o primeiro `executar` pendurado até o teste abrir o portão: é assim que
+ * se segura "o turno está rodando AGORA", sem timer nenhum, para ver o que
+ * acontece com a mensagem que chega no meio dele.
+ */
+function comPortao(b: ReturnType<typeof criarBancada>) {
+  let abrir!: (r: ResultadoExecucao) => void;
+  const preso = new Promise<ResultadoExecucao>((res) => {
+    abrir = res;
+  });
+  b.cfg.responder = (_a, n) => (n === 1 ? preso : 'ok');
+  return (r: ResultadoExecucao) => abrir(r);
+}
+
 const comp = (ehComprovante: boolean | null, verificacao: string, valor: number | null = null): ComprovanteDoTurno => ({
   analise: { ehComprovante, valor },
   verificacao,
@@ -287,11 +301,7 @@ async function main() {
   // ── mensagem que chega NO MEIO do turno ────────────────────────────────────
   {
     const b = criarBancada();
-    let abrir!: (r: ResultadoExecucao) => void;
-    const preso = new Promise<ResultadoExecucao>((res) => {
-      abrir = res;
-    });
-    b.cfg.responder = (_a, n) => (n === 1 ? preso : 'ok');
+    const abrir = comPortao(b);
 
     const antes = comp(true, 'confere', 200);
     const durante = comp(false, 'sem_comprovante');
@@ -317,17 +327,15 @@ async function main() {
   // ── mensagem no meio de um turno que PERDE o claim: os anexos são fundidos ─
   {
     const b = criarBancada();
-    let abrir!: (r: ResultadoExecucao) => void;
-    const preso = new Promise<ResultadoExecucao>((res) => {
-      abrir = res;
-    });
-    b.cfg.responder = (_a, n) => (n === 1 ? preso : 'ok');
+    const abrir = comPortao(b);
 
     const antes = comp(true, 'confere', 200);
     const durante = comp(false, 'sem_comprovante');
     const p1 = rastrear(b.agenda.registrar({ waId: 'A', nome: 'Ana', comprovante: antes }));
     await b.avancar(8_000);
-    const p2 = rastrear(b.agenda.registrar({ waId: 'A', comprovante: durante }));
+    // a mensagem nova traz nome PRÓPRIO: é o caso que separa "a janela nova
+    // herda o que o perdedor sabia" de "o perdedor sobrescreve a janela nova"
+    const p2 = rastrear(b.agenda.registrar({ waId: 'A', nome: 'Ana Paula', comprovante: durante }));
 
     abrir('claim-perdido');
     await drenar();
@@ -342,21 +350,48 @@ async function main() {
       [antes, durante],
       'o comprovante do ciclo perdedor foi fundido na janela nova, antes do que chegou depois',
     );
-    assert.strictEqual(b.chamadas[1].nome, 'Ana', 'e o nome que já sabíamos sobrevive');
+    assert.strictEqual(
+      b.chamadas[1].nome,
+      'Ana Paula',
+      'a fusão NÃO sobrescreve o que a janela nova já sabe: o nome mais recente é o que vale, como em qualquer outra mensagem',
+    );
     assert.strictEqual(p2.resolvida, true);
+  }
+
+  // ── o outro lado da fusão: sem nome novo, o do perdedor sobrevive ──────────
+  {
+    const b = criarBancada();
+    const abrir = comPortao(b);
+    rastrear(b.agenda.registrar({ waId: 'A', nome: 'Ana' }));
+    await b.avancar(8_000);
+    rastrear(b.agenda.registrar({ waId: 'A' })); // mensagem sem nome no meio do turno
+
+    abrir('claim-perdido');
+    await drenar(); // deixa a fusão acontecer antes de a janela nova disparar
+    await b.avancar(8_000);
+    assert.strictEqual(b.chamadas[1].nome, 'Ana', 'o nome que o ciclo perdedor já tinha não se perde na fusão');
   }
 
   // ── acordar: só serve para quem já perdeu um claim ─────────────────────────
   {
     const b = criarBancada();
-    b.cfg.responder = (_a, n) => (n === 1 ? 'claim-perdido' : 'ok');
+    b.cfg.responder = () => 'claim-perdido'; // perde sempre: o pendente segue vivo entre as tentativas
     const p = rastrear(b.agenda.registrar({ waId: 'A' }));
-    await b.avancar(8_000); // perdeu: retry agendado para 1s
+    await b.avancar(8_000); // perdeu: retry da escada agendado para 1s
 
     b.agenda.acordar('A'); // o turno vencedor terminou e liberou o claim
     await b.avancar(ACORDAR_MS);
     assert.strictEqual(b.chamadas.length, 2, 'acordado, tenta em 250ms em vez de esperar o 1s da escada');
-    assert.strictEqual(p.resolvida, true);
+
+    // O timer de 1s da escada tem que ter MORRIDO no acordar. Se sobrasse, ele
+    // dispararia um segundo `disparar` em cima do mesmo pendente — dois turnos
+    // concorrentes do mesmo número é literalmente o print de 06/08/2026.
+    await b.avancar(1_000 - ACORDAR_MS);
+    assert.strictEqual(b.chamadas.length, 2, 'acordar cancelou o timer antigo: nenhum timer solto ficou para trás');
+
+    assert.strictEqual(b.agenda.cancelarJanelas(), 1, 'o pendente segue na agenda, ainda esperando a vez dele');
+    await drenar();
+    assert.strictEqual(p.resolvida, true, 'e o SIGTERM solta a request que estava presa nele');
   }
   {
     const b = criarBancada();
@@ -377,6 +412,54 @@ async function main() {
     () => criarBancada().agenda.acordar('5549999551051'),
     'acordar número sem janela aberta é no-op — acontece a cada turno que termina',
   );
+
+  // ── mensagem nova ENTRE dois retries devolve o pendente à janela legítima ──
+  // Diferente do caso da fusão: aqui o `executar` JÁ TERMINOU e o pendente está
+  // de volta na agenda esperando o retry, então a mensagem cai no mesmo objeto.
+  {
+    const b = criarBancada();
+    b.cfg.responder = (_a, n) => (n === 1 ? 'claim-perdido' : 'ok');
+    const p1 = rastrear(b.agenda.registrar({ waId: 'A' }));
+    await b.avancar(8_000);
+    assert.deepStrictEqual(b.agenda.estado(), { pendentes: 1, waIds: ['A'] }, 'o pendente voltou para a agenda esperando a vez');
+
+    const p2 = rastrear(b.agenda.registrar({ waId: 'A' })); // o lead voltou a digitar
+    await drenar();
+    assert.strictEqual(p1.resolvida, true, 'a request nova assumiu o buffer');
+
+    // Isto não é mais um ciclo esperando claim: é uma janela de debounce nova, e
+    // acordá-la mataria o debounce (a REGRA CRÍTICA). Sem zerar as tentativas, o
+    // pendente continuaria "acordável" pelo resto da vida dele.
+    const esperasAntes = b.esperas.length;
+    const canceladosAntes = b.cancelados.length;
+    b.agenda.acordar('A');
+    assert.strictEqual(b.esperas.length, esperasAntes, 'acordar voltou a ser no-op: a mensagem nova zerou as tentativas');
+    assert.strictEqual(b.cancelados.length, canceladosAntes, 'nem cancelou o timer da janela nova');
+    await b.avancar(ACORDAR_MS);
+    assert.strictEqual(b.chamadas.length, 1, 'nada foi antecipado');
+
+    await b.avancar(8_000 - ACORDAR_MS);
+    assert.strictEqual(b.chamadas.length, 2, 'a janela nova é de debounce cheio, não o 1s da escada de retry');
+    assert.strictEqual(p2.resolvida, true);
+  }
+
+  // ── ...e reinicia o orçamento de retry ────────────────────────────────────
+  {
+    const b = criarBancada();
+    b.cfg.responder = () => 'claim-perdido'; // o outro turno está demorando horrores
+    rastrear(b.agenda.registrar({ waId: 'A' }));
+    await b.avancar(8_000 + 100_000); // queima 100s dos 120s de orçamento
+    assert.strictEqual(b.agenda.estado().pendentes, 1, 'ainda dentro do orçamento, insistindo');
+
+    rastrear(b.agenda.registrar({ waId: 'A' })); // o lead escreve de novo
+    await b.avancar(8_000 + 100_000);
+    assert.strictEqual(
+      b.agenda.estado().pendentes,
+      1,
+      'a mensagem nova reinicia o orçamento: herdando os 100s já gastos, este ciclo desistiria cedo — e desistir é a mensagem do paciente ficar sem resposta nenhuma',
+    );
+    assert.strictEqual(b.agenda.cancelarJanelas(), 1, 'e o SIGTERM ainda a encontra na agenda');
+  }
 
   // ── executar que LANÇA não pendura a request nem derruba a agenda ──────────
   {
@@ -477,6 +560,22 @@ async function main() {
   assert.strictEqual(escolherComprovante([selfie, pagou, selfie]), pagou, 'a posição não importa: basta um aceitável na janela');
   assert.strictEqual(escolherComprovante([naoAnalisado, pagou]), pagou, 'anexo que nem foi analisado não tira a vez do comprovante bom');
   assert.strictEqual(escolherComprovante([selfie, outraChave]), outraChave, 'sem nenhum aceitável vale o último — é o que a pessoa acabou de tentar');
+
+  // A cláusula `verificacao !== 'nao_confere'`: o anexo É um comprovante de Pix,
+  // mas o Pix foi para OUTRA CHAVE. Sem ela, ele contaria como "aceitável" e
+  // venceria a janela — e aí o backstop liberaria um handoff para quem pagou,
+  // só que não para a clínica. Os dois asserts abaixo são os que travam isso;
+  // com `outraChave` na última posição o resultado é o mesmo com e sem a regra.
+  assert.strictEqual(
+    escolherComprovante([outraChave, selfie]),
+    selfie,
+    'anexo de chave não-conferida não vence por ser "comprovante": sem nada aceitável na janela, vale o último',
+  );
+  assert.strictEqual(
+    escolherComprovante([outraChave, pagou]),
+    pagou,
+    'e não rouba a vez do comprovante que realmente confere, mesmo tendo chegado primeiro',
+  );
   assert.strictEqual(escolherComprovante([pagou, outraChave]), pagou, 'comprovante de outra chave não invalida o que já conferia');
   assert.strictEqual(escolherComprovante([]), undefined, 'janela sem anexo nenhum');
 
