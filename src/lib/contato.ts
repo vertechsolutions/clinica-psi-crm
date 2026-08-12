@@ -30,12 +30,20 @@ export function primeiroNomeDoPush(pushName?: string | null): string | null {
  */
 export function blocoContatoDe(nomeFicha?: string | null, pushName?: string | null): string {
   const ficha = nomeFicha && nomeFicha.trim() ? nomeFicha.trim() : null;
+  // "Use-o com naturalidade" era a redação até 11/08/2026, e este bloco é
+  // injetado a CADA turno — o modelo lia como licença de vocativo por turno e
+  // saía "Entendi, Eldilaine" / "Ótimo, Eldilaine" / "Perfeito, Eldilaine" em
+  // sequência (print da Bruna). A parcimônia agora é explícita e numérica; o
+  // `vocativo.ts` é a garantia de código, porque o prompt efetivo pode vir do
+  // `app_config` e estar congelado numa versão antiga.
+  const PARCIMONIA =
+    'Use o nome com PARCIMÔNIA: no máximo uma vez a cada três mensagens suas, e NUNCA em duas mensagens seguidas. Chamar a pessoa pelo nome a cada turno soa robótico. Na dúvida, não use.';
   if (ficha) {
-    return `[DADOS DO CONTATO]\nVocê já sabe o primeiro nome do paciente: ${ficha}. Use-o com naturalidade e NUNCA pergunte o nome de novo (a etapa 3 do funil já está cumprida). Nunca peça o nome completo — o nome oficial vem no formulário de triagem.`;
+    return `[DADOS DO CONTATO]\nVocê já sabe o primeiro nome do paciente: ${ficha}. ${PARCIMONIA} E NUNCA pergunte o nome de novo (a etapa 3 do funil já está cumprida). Nunca peça o nome completo — o nome oficial vem no formulário de triagem.`;
   }
   const push = primeiroNomeDoPush(pushName);
   if (push) {
-    return `[DADOS DO CONTATO]\nO nome do contato no WhatsApp é "${push}" — provavelmente o primeiro nome da pessoa. Trate-a por esse nome com naturalidade e NÃO peça o primeiro nome (a etapa 3 já está coberta). Se a pessoa se apresentar com outro nome, adote o novo. Nunca peça o nome completo.`;
+    return `[DADOS DO CONTATO]\nO nome do contato no WhatsApp é "${push}" — provavelmente o primeiro nome da pessoa. ${PARCIMONIA} E NÃO peça o primeiro nome (a etapa 3 já está coberta). Se a pessoa se apresentar com outro nome, adote o novo. Nunca peça o nome completo.`;
   }
   return '';
 }

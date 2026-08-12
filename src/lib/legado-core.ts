@@ -14,7 +14,13 @@
  */
 import crypto from 'node:crypto';
 
-export type OrigemLegado = 'snapshot' | 'contato' | 'eco' | 'manual';
+/**
+ * De onde veio a supressão. `pausada` é a mais nova (11/08/2026): a retenção
+ * apaga a linha de `wa_conversations` em 30/90 dias, e com ela a flag `pausada`
+ * — o que devolvia à Camila, em silêncio, um chat que a Bruna tinha assumido.
+ * A decisão de não falar migra pra cá antes do conteúdo sumir.
+ */
+export type OrigemLegado = 'snapshot' | 'contato' | 'eco' | 'manual' | 'pausada';
 
 /** Só dígitos (mesma normalização do transporte). */
 const digitos = (s: string): string => (s || '').replace(/\D/g, '');

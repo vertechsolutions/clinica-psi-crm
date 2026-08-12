@@ -37,6 +37,10 @@ const PUROS = [
   'test-emoji', // nada que chega ao paciente tem emoji (e preço/acento sobrevivem)
   'test-anti-bot', // três turnos idênticos são robô — rajada e anexo não são
   'test-turno-agenda', // debounce por turno: rajada vira UMA resposta (relógio falso)
+  'test-voz', // a pausa cala o turno em vôo (a Bruna assumiu o chat)
+  'test-vocativo', // o nome do paciente com parcimônia, sem mutilar a frase
+  'test-pagamento', // não pede Pix antes do horário aceito — e não trava a venda
+  'test-prompt', // os defeitos não voltam pela edição do prompt
 ];
 
 const raiz = path.resolve(import.meta.dirname ?? __dirname, '..');

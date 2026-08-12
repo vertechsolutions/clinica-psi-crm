@@ -18,18 +18,32 @@ const DEFAULT_MAX_PARTS = 3;
 // a UX de "2-3 balões" não depende do modelo lembrar de pular linha.
 const AUTO_SPLIT_MIN = 180;
 
+/**
+ * As frases de um texto. Fonte ÚNICA da heurística: até 11/08/2026 a mesma
+ * regex vivia duplicada no `contarFrases` e no `splitBySentence`, e duas cópias
+ * de uma heurística um dia divergem.
+ */
+function frasesDe(s: string): string[] {
+  return (s.match(/[^.!?…]+[.!?…]+|\S[^.!?…]*$/g) ?? []).map((f) => f.trim()).filter(Boolean);
+}
+
 /** conta frases aproximadas (mesma heurística de splitBySentence). */
 function contarFrases(s: string): number {
-  return (s.match(/[^.!?…]+[.!?…]+|\S[^.!?…]*$/g) ?? []).filter((f) => f.trim()).length;
+  return frasesDe(s).length;
+}
+
+/** Comprimento da maior frase — o piso que impede o auto-split de picotar uma. */
+function maiorFrase(s: string): number {
+  return frasesDe(s).reduce((max, f) => Math.max(max, f.length), 0);
 }
 
 /** Quebra um parágrafo grande em pedaços <= maxLen, preferindo fim de frase. */
 function splitBySentence(paragraph: string, maxLen: number): string[] {
-  const sentences = paragraph.match(/[^.!?…]+[.!?…]+|\S[^.!?…]*$/g) ?? [paragraph];
+  const sentences = frasesDe(paragraph);
+  if (sentences.length === 0) sentences.push(paragraph);
   const out: string[] = [];
   let buf = '';
-  for (const sRaw of sentences) {
-    const s = sRaw.trim();
+  for (const s of sentences) {
     if (!s) continue;
     if (s.length > maxLen) {
       // frase única gigante: hard-split no último espaço antes de maxLen
@@ -84,8 +98,17 @@ export function splitReply(text: string, opts: SplitOpts = {}): string[] {
 
   // Auto-split: sobrou UMA bolha longa e multi-frase (o modelo não pulou linha) →
   // reparte por frase em ~2 bolhas equilibradas, garantindo os balões.
+  //
+  // O `maiorFrase` no piso é a correção do print de 11/08/2026 (uma bolha
+  // terminou em "por volta de 10h15 da" e a seguinte começou em "manhã."). Só
+  // com `ceil(len/2)`, qualquer frase maior que a metade do texto estourava o
+  // maxLen e caía no hard-split do `splitBySentence`, que corta no ESPAÇO. Com o
+  // piso, nenhuma frase individual excede o teto e o hard-split nunca dispara
+  // por aqui — o equilíbrio das bolhas cede primeiro, que é a troca certa: uma
+  // bolha a mais de texto é invisível, uma frase partida a cliente fotografou.
   if (parts.length === 1 && parts[0].length > AUTO_SPLIT_MIN && contarFrases(parts[0]) >= 3) {
-    const repartido = splitBySentence(parts[0], Math.ceil(parts[0].length / 2));
+    const teto = Math.max(Math.ceil(parts[0].length / 2), maiorFrase(parts[0]));
+    const repartido = splitBySentence(parts[0], teto);
     if (repartido.length >= 2) {
       parts.length = 0;
       parts.push(...repartido);

@@ -72,4 +72,63 @@ assert.ok(infoBolhas.length >= 2, 'parágrafo único multi-frase deve virar 2+ b
 // 11) resposta curta (poucas frases) NÃO é picotada pelo auto-split
 assert.deepStrictEqual(splitReply('Oi, Murilo! Que bom que você veio 😊'), ['Oi, Murilo! Que bom que você veio 😊']);
 
-console.log(`OK test-split — 12 asserts (backstop 350 + auto-split)`);
+// 12) O PRINT da Bruna (11/08/2026): a bolha terminava em "10h15 da" e a
+//     seguinte começava em "manhã.". Causa: o auto-split chamava splitBySentence
+//     com maxLen = ceil(len/2), e qualquer frase maior que essa metade caía no
+//     hard-split, que corta no ESPAÇO e não em fim de frase.
+const doPrint =
+  'Perfeito, Eldilaine! Vou verificar com a equipe a disponibilidade de horários entre segunda e quinta, ' +
+  'por volta de 10h15 da manhã. Assim que tivermos uma opção, entro em contato por aqui para te avisar, tá bom?';
+assert.deepStrictEqual(
+  splitReply(doPrint),
+  [
+    'Perfeito, Eldilaine!',
+    'Vou verificar com a equipe a disponibilidade de horários entre segunda e quinta, por volta de 10h15 da manhã.',
+    'Assim que tivermos uma opção, entro em contato por aqui para te avisar, tá bom?',
+  ],
+  'o auto-split nunca corta no meio de uma frase (print de 11/08/2026)',
+);
+
+// 13) O INVARIANTE, não só o caso do print: no caminho do auto-split (nenhuma
+//     frase sozinha maior que o teto), cada bolha é um número INTEIRO de frases
+//     consecutivas. Checar só a pontuação final não bastaria — um corte depois
+//     de "Dr." passaria.
+const FRASES = /[^.!?…]+[.!?…]+|\S[^.!?…]*$/g;
+function saoFrasesInteiras(original: string, bolhas: string[]): boolean {
+  const frases = (original.match(FRASES) ?? []).map((f) => f.trim()).filter(Boolean);
+  const juntas = bolhas.join(' ').replace(/\s+/g, ' ').trim();
+  // reconstrói: a concatenação das bolhas tem que ser a concatenação das frases,
+  // e cada bolha tem que começar exatamente onde uma frase começa
+  if (juntas !== frases.join(' ')) return false;
+  let i = 0;
+  for (const b of bolhas) {
+    const dentro = b.replace(/\s+/g, ' ').trim();
+    let acc = '';
+    while (acc !== dentro) {
+      if (i >= frases.length) return false;
+      acc = acc ? `${acc} ${frases[i++]}` : frases[i++];
+      if (acc.length > dentro.length) return false;
+    }
+  }
+  return i === frases.length;
+}
+const corpus = [
+  doPrint,
+  infoInicial,
+  'Que bom que você está determinada a começar logo. Isso é um passo muito importante. ' +
+    'Podemos deixar tudo encaminhado para o dia 20, assim você já consegue iniciar a terapia sem mais espera.',
+  'Sim, nossos atendimentos são 100% online, por chamada de vídeo. ' +
+    'A ideia é justamente trazer a praticidade e o conforto de fazer a sessão de onde você estiver. ' +
+    'Você tem alguma dúvida ou gostaria de agendar uma primeira sessão?',
+  'As sessões individuais duram 45 minutos. As de casal duram 50 minutos. ' +
+    'Para que eu possa te ajudar a agendar, o que te trouxe à terapia neste momento?',
+];
+for (const texto of corpus) {
+  const partes = splitReply(texto);
+  assert.ok(
+    saoFrasesInteiras(texto, partes),
+    `bolha cortada no meio da frase em: ${JSON.stringify(partes)}`,
+  );
+}
+
+console.log(`OK test-split — 18 asserts (backstop 350 + auto-split + frases inteiras)`);
