@@ -114,3 +114,66 @@ export async function aindaTitular(waId: string, token: string): Promise<boolean
     return false;
   }
 }
+
+/** Por que este turno pode (ou não pode) mandar bolha. */
+export type Voz = 'ok' | 'pausada' | 'sem-titularidade' | 'erro';
+
+/** O recorte da linha de `wa_conversations` que a decisão consome. */
+export interface LinhaDaVez {
+  pausada: boolean | null;
+  turno_token: string | null;
+}
+
+/**
+ * A decisão, dada a linha do banco — pura, e é aqui que mora a correção do
+ * relato da Bruna de 11/08/2026 ("a IA não desativa quando eu assumo").
+ *
+ * A ordem dos testes não é arbitrária. A pausa é checada ANTES da titularidade
+ * porque quando as duas valem o motivo que a operação precisa ler no log é o
+ * humano que assumiu, não a corrida de claim — se a Bruna reclamar de novo, é
+ * essa linha que responde.
+ *
+ * Linha ausente conta como falta de titularidade: durante um turno ela SEMPRE
+ * existe (o `claimTurno` a cria), então sumir no meio só acontece por retenção
+ * ou apagamento LGPD, e nos dois casos calar é a leitura defensável.
+ *
+ * Sem `turno_ate > now()`, pelo mesmo motivo já escrito no `aindaTitular`: o
+ * token é a identidade, a expiração governa apenas quem pode ADQUIRIR.
+ */
+export function decidirVoz(linha: LinhaDaVez | undefined, token: string): Exclude<Voz, 'erro'> {
+  if (!linha) return 'sem-titularidade';
+  if (linha.pausada === true) return 'pausada';
+  if (linha.turno_token !== token) return 'sem-titularidade';
+  return 'ok';
+}
+
+/**
+ * As duas perguntas do portão de saída — "ainda sou o titular?" e "a conversa
+ * continua com a IA?" — num único SELECT.
+ *
+ * Uma query só, e não `isPaused()` + `aindaTitular()`, por CORREÇÃO e não por
+ * economia: duas leituras abrem uma janela entre elas em que a pausa cai e
+ * passa despercebida. Uma linha lida uma vez responde as duas contra o mesmo
+ * snapshot.
+ *
+ * Substitui o `aindaTitular` nos call sites do `turno.ts`; a função antiga
+ * continua exportada porque a semântica "só o token" é o que o
+ * `test-claim-live.ts` prova sobre o claim isolado.
+ *
+ * Falha FECHADO (`'erro'` → ninguém fala). A assimetria aqui é diferente da do
+ * anti-bot: o risco não é emudecer quem pede ajuda — o turno perdido é refeito
+ * pela varredura de boot —, é falar por cima da psicóloga num atendimento que
+ * ela assumiu, e isso o WhatsApp não desfaz.
+ */
+export async function podeFalar(waId: string, token: string): Promise<Voz> {
+  try {
+    const { rows } = await query<LinhaDaVez>(
+      `SELECT pausada, turno_token FROM wa_conversations WHERE wa_id = $1`,
+      [waId],
+    );
+    return decidirVoz(rows[0], token);
+  } catch (e) {
+    console.error('[claim] podeFalar falhou — abortando o envio por precaução', e);
+    return 'erro';
+  }
+}

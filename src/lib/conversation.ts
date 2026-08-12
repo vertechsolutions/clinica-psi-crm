@@ -3,9 +3,16 @@ import { type LeadExtraido } from './triagem';
 import { runTriagemSemRepeticao } from './anti-repeat';
 import { DEFAULT_PROMPT } from './default-prompt';
 import { agendaContexto } from './sheets';
-import { blocoContatoDe } from './contato';
+import { blocoContatoDe, primeiroNomeDoPush } from './contato';
 import { camposPreenchidos, blocoFichaDe } from './ficha';
-import { blocoOndeParamos, type MensagemHistorico } from './retomada';
+import { blocoOndeParamos, extrairSinais, type MensagemHistorico } from './retomada';
+import { orcamentoDeVocativo, podarVocativo } from './vocativo';
+import {
+  etapaQueFalta,
+  liberadoParaPagamento,
+  mensagemAntesDoPagamento,
+  pacientePediuPagamento,
+} from './pagamento';
 
 /** Quantas mensagens recentes reidratam o contexto da IA a cada turno. */
 const HISTORY_LIMIT = 30;
@@ -288,15 +295,55 @@ export async function computeReply(waId: string, pushName?: string): Promise<Tur
   // bloco pule a etapa 3 do funil quando ainda não sabemos o nome.
   const ondeParamos = blocoOndeParamos(history, { temNome: Boolean(contato) });
   if (ondeParamos) system = `${system}\n\n${ondeParamos}`;
-  const result = await runTriagemSemRepeticao({
-    system,
-    messages: history.map(({ role, content }) => ({ role, content })),
-  });
+
+  // Portão do pagamento (pedida da Bruna, 11/08/2026: "tá empurrando muito os
+  // pagamentos antes da hora"). Mora AQUI, e não no `turno.ts` como o backstop de
+  // comprovante, porque depende do histórico E da ficha — e os dois só estão
+  // juntos dentro desta função. O backstop de comprovante é o oposto: depende do
+  // anexo da JANELA, que só o turno conhece.
+  const sinais = extrairSinais(history);
+  const ultimaDoUser = [...history].reverse().find((m) => m.role === 'user')?.content ?? '';
+  const estado = {
+    horarioAceito: sinais.horarioAceito,
+    queixaColetada: Boolean(ficha?.motivacao || ficha?.resumo),
+    disponibilidade: Boolean(ficha?.disponibilidade),
+  };
+  // A exceção é tão importante quanto o portão: quem PEDE o Pix recebe o Pix.
+  const pagamentoLiberado = liberadoParaPagamento(estado) || pacientePediuPagamento(ultimaDoUser);
+
+  const result = await runTriagemSemRepeticao(
+    {
+      system,
+      messages: history.map(({ role, content }) => ({ role, content })),
+    },
+    { pagamentoLiberado, pixInfo: pixInfo() },
+  );
   let resposta = result.resposta?.trim() || 'Desculpa, pode repetir? Não consegui entender.';
   // Nunca deixa placeholder cru vazar
   resposta = resposta
     .replaceAll(FORM_URL_PLACEHOLDER, formUrl())
     .replaceAll(PIX_INFO_PLACEHOLDER, process.env.PIX_INFO?.trim() || '');
+  // Parcimônia com o nome (pedida da Bruna, 11/08/2026: "está repetindo muito o
+  // nome em todas as conversas"). Aqui e não depois do `splitReply` por três
+  // razões: `history` e `ficha` já estão em mão, então não custa query nenhuma;
+  // o orçamento é por TURNO, e depois do split teria de atravessar o array; e o
+  // que o `persistReply` grava passa a ser o texto já podado, então o histórico
+  // do turno seguinte não reensina o vício ao modelo.
+  //
+  // O caminho de `enviarForm` não passa por aqui — as 4 bolhas oficiais do
+  // `fechamento.ts` não têm nome.
+  const nomeConhecido = ficha?.nome?.trim() || primeiroNomeDoPush(pushName);
+  resposta = podarVocativo(resposta, nomeConhecido, orcamentoDeVocativo(history, nomeConhecido));
+
+  // Backstop do pagamento: o retry avisou e o modelo insistiu em cobrar. Aqui a
+  // resposta é TROCADA pelo texto da clínica, como o backstop de comprovante faz
+  // no `turno.ts`. Censurar só o trecho da chave deixaria "assim que fizer, me
+  // envia o comprovante" sem chave nenhuma — pior que o defeito.
+  if (result.cobrouCedo) {
+    const etapa = etapaQueFalta(estado);
+    console.warn(`[pagamento] cobrança suprimida: etapa 6 pendente (falta ${etapa}).`);
+    resposta = mensagemAntesDoPagamento(etapa);
+  }
   return { resposta, lead: result.lead, pronto: result.pronto, enviarForm: result.enviarForm };
 }
 

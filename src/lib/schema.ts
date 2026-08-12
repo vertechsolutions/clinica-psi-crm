@@ -115,6 +115,15 @@ export async function initSchema(): Promise<void> {
     `);
     // bases criadas antes desta decisão: some com a coluna de horário
     await client.query(`ALTER TABLE wa_legado DROP COLUMN IF EXISTS ultima_tentativa_em;`);
+    // 11/08/2026: a pausa por atendimento humano passa a sobreviver à retenção
+    // migrando pra cá (ver preservarPausas em maintenance.ts). Bases antigas têm
+    // o CHECK sem 'pausada' — drop + add porque o Postgres não tem ALTER CHECK,
+    // e nesta ordem a operação é idempotente a cada boot.
+    await client.query(`ALTER TABLE wa_legado DROP CONSTRAINT IF EXISTS wa_legado_origem_check;`);
+    await client.query(
+      `ALTER TABLE wa_legado ADD CONSTRAINT wa_legado_origem_check
+         CHECK (origem IN ('snapshot','contato','eco','manual','pausada'));`,
+    );
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS app_config (

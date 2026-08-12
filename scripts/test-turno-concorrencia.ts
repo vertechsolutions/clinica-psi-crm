@@ -54,6 +54,7 @@ const CHAVE_LEGADO = 'chave-de-teste-do-turno';
 const WA_RAJADA = '5500000000031'; // duas mensagens no mesmo instante
 const WA_MEIO = '5500000000032'; // mensagem que chega com o turno rodando
 const WA_ROUBO = '5500000000033'; // turno que perde a titularidade no meio
+const WA_ASSUMIDO = '5500000000038'; // a Bruna assume o chat com o turno rodando
 
 /** o que o lead manda na rajada — cada fato está numa mensagem SÓ (ver CA2) */
 const RAJADA_1 = 'oi, boa tarde! meu nome é Zoraide Antunes';
@@ -123,7 +124,7 @@ const env = {
   ZAPI_INSTANCE_TOKEN: 'TOKTURNO',
   ZAPI_CLIENT_TOKEN: '',
   ZAPI_BASE_URL: `http://127.0.0.1:${PORTA_ZAPI}`,
-  WA_ALLOWLIST: `${WA_RAJADA},${WA_MEIO},${WA_ROUBO}`,
+  WA_ALLOWLIST: `${WA_RAJADA},${WA_MEIO},${WA_ROUBO},${WA_ASSUMIDO}`,
   // sem destinatário de alerta: o handoff não sai da rede do teste, e o contador
   // de envios não mistura bolha de paciente com aviso interno.
   NOTIFY_ALERT_NUMBERS: '',
@@ -241,8 +242,9 @@ async function main() {
   const { initSchema } = await import('../src/lib/schema');
   const legado = await import('../src/lib/legado');
   const { deletePatientData } = await import('../src/lib/maintenance');
+  const conv = await import('../src/lib/conversation');
 
-  const TODOS = [WA_RAJADA, WA_MEIO, WA_ROUBO];
+  const TODOS = [WA_RAJADA, WA_MEIO, WA_ROUBO, WA_ASSUMIDO];
   const limpar = async () => {
     for (const wa of TODOS) {
       await deletePatientData(wa);
@@ -470,6 +472,35 @@ async function main() {
       await query(`UPDATE wa_conversations SET turno_ate = NULL, turno_token = NULL WHERE wa_id = $1`, [
         WA_ROUBO,
       ]);
+    }
+
+    // ── CA8: a BRUNA assume o chat com o turno rodando ───────────────────────
+    // O print de 11/08/2026, ponta a ponta. A conversa não perde a titularidade
+    // (ninguém disputou o número) — perde a VOZ, porque deixou de ser da IA. Sem
+    // o `podeFalar`, o `aindaTitular` diria "sim, o claim é seu" e a Camila
+    // escreveria por cima da psicóloga.
+    //
+    // A pausa é gravada direto na linha, em vez de simular o eco: o eco depende
+    // do `receiveCallbackSentByMe` da instância e de um sleep de 2s dentro do
+    // `tratarEco`, e o que está sob teste aqui é o portão do turno, não o
+    // detector de takeover (esse é o `test-webhook-http`).
+    {
+      await post(msg({ phone: WA_ASSUMIDO, messageId: 'ASSUM1', text: { message: 'oi, queria agendar' } }));
+      await esperarTurnoRodando(WA_ASSUMIDO);
+      await conv.pauseConversation(WA_ASSUMIDO);
+
+      await esperarAte(
+        () => logTem(/pausada — a equipe assumiu/i) || enviosDe(WA_ASSUMIDO).length > 0,
+        'o turno perceber que a equipe assumiu (ou falar por cima dela)',
+      );
+      await espera(3000); // se fosse enviar mesmo assim, seria agora
+
+      assert.deepStrictEqual(
+        enviosDe(WA_ASSUMIDO),
+        [],
+        'a Bruna assumiu durante a geração: NENHUMA bolha sai (print de 11/08/2026)',
+      );
+      await conferirEnvios(WA_ASSUMIDO, 0);
     }
 
     assert.deepStrictEqual(inesperados, [], 'o app só chamou os endpoints Z-API que o stub conhece');

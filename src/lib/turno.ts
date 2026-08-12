@@ -19,7 +19,7 @@ import { sendInternalAlert, sendText, sendTextSequence } from './whatsapp';
 import { pareceBot, ultimosTurnosDoLead } from './anti-bot';
 import { mensagemAnexoInvalido } from './comprovante-core';
 import { semEmoji } from './emoji';
-import { aindaTitular, claimTurno, releaseTurno } from './turno-claim';
+import { claimTurno, podeFalar, releaseTurno, type Voz } from './turno-claim';
 import type { MensagemHistorico } from './retomada';
 import {
   criarAgenda,
@@ -176,10 +176,31 @@ async function rodarSobClaim(
 }
 
 /**
+ * Por que este turno ficou mudo, em uma linha legível no log do Railway.
+ *
+ * O motivo importa mais que o fato: "a equipe assumiu" é operação normal e não
+ * se investiga; "titularidade perdida" é corrida de claim; "erro" é banco fora
+ * do ar. Sem distinguir, todo silêncio vira o mesmo warn e a próxima reclamação
+ * da Bruna volta a ser investigada do zero.
+ */
+function logSilencio(waId: string, voz: Voz, quando: string): void {
+  // A frase de `sem-titularidade` guarda o termo "titularidade perdida" de
+  // propósito: é o que o `test-turno-concorrencia` usa como sinal do CA7, e é a
+  // descrição exata do que aconteceu.
+  const motivo =
+    voz === 'pausada'
+      ? 'a conversa está pausada — a equipe assumiu o atendimento (ou houve handoff)'
+      : voz === 'sem-titularidade'
+        ? 'titularidade perdida: outro turno assumiu este número'
+        : 'não deu pra confirmar no banco (falha fechada por precaução)';
+  console.warn(`[turno] ${mascarar(waId)} sem resposta ${quando}: ${motivo}.`);
+}
+
+/**
  * A sequência do turno, já com a vez garantida: descarta o turno se do outro
- * lado houver um robô, gera a resposta, aplica o backstop de comprovante,
- * reconfere a titularidade, envia, persiste o que o paciente REALMENTE recebeu
- * e, no handoff, pausa e chama a equipe.
+ * lado houver um robô, confere se ainda tem voz, gera a resposta, aplica o
+ * backstop de comprovante, RECONFERE a voz, envia, persiste o que o paciente
+ * REALMENTE recebeu e, no handoff, pausa e chama a equipe.
  */
 async function desfechoDoTurno(
   waId: string,
@@ -201,17 +222,31 @@ async function desfechoDoTurno(
     return;
   }
 
+  // Saída barata, antes de gastar o Gemini. O caso que ela cobre é o comum: a
+  // Bruna assume o chat durante os 8s de debounce, então a pausa já está gravada
+  // quando a janela fecha. Além do token, evita mandar ao modelo a mensagem de
+  // um paciente que está sendo atendido por gente.
+  //
+  // NÃO substitui a reconferência lá embaixo: entre este ponto e o envio ainda
+  // existem 20-40s de geração, e é dentro deles que o print aconteceu.
+  const vozInicial = await podeFalar(waId, token);
+  if (vozInicial !== 'ok') {
+    logSilencio(waId, vozInicial, 'antes de gerar a resposta');
+    return;
+  }
+
   let turno: Awaited<ReturnType<typeof computeReply>>;
   try {
     turno = await computeReply(waId, nome);
   } catch (err) {
     // O aviso de instabilidade também é uma bolha no WhatsApp do paciente: se
-    // outro turno assumiu o número enquanto a geração falhava, mandá-lo aqui
-    // seria a segunda mensagem que esta leva existe para impedir.
-    if (await aindaTitular(waId, token)) {
+    // outro turno assumiu o número — ou se a Bruna assumiu a conversa — enquanto
+    // a geração falhava, mandá-lo aqui seria a segunda voz que esta leva existe
+    // para impedir.
+    if ((await podeFalar(waId, token)) === 'ok') {
       await sendFallback(waId, err);
     } else {
-      console.error('[turno] erro ao gerar resposta (aviso suprimido: titularidade perdida)', err);
+      console.error('[turno] erro ao gerar resposta (aviso suprimido: o turno não tem mais voz)', err);
     }
     return;
   }
@@ -251,12 +286,14 @@ async function desfechoDoTurno(
     console.warn('[turno] enviarForm=true sem FORM_URL — o fechamento vai sem o link.');
   }
 
-  // A última pergunta antes do primeiro byte que sai para o paciente. O turno
-  // demora dezenas de segundos (duas chamadas ao Gemini); se o TTL estourou e
-  // outro turno assumiu nesse meio-tempo, abortar em silêncio é melhor do que
-  // entregar o mesmo par de bolhas duas vezes — o print de 06/08/2026.
-  if (!(await aindaTitular(waId, token))) {
-    console.warn(`[turno] titularidade de ${mascarar(waId)} perdida durante a geração — envio abortado.`);
+  // A última pergunta antes do primeiro byte que sai para o paciente, e o ponto
+  // AUTORITATIVO: o turno demora dezenas de segundos (até duas chamadas ao
+  // Gemini), e é nesse intervalo que os dois prints nasceram — o de 06/08/2026
+  // (outro turno assumiu → par de bolhas duplicado) e o de 11/08/2026 (a Bruna
+  // assumiu → a Camila falou por cima dela).
+  const voz = await podeFalar(waId, token);
+  if (voz !== 'ok') {
+    logSilencio(waId, voz, 'com a resposta já pronta');
     return;
   }
 

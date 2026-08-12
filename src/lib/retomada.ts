@@ -14,6 +14,12 @@ export interface SinaisRetomada {
   valores: boolean;
   modalidade: 'individual' | 'casal' | null;
   horarioProposto: boolean;
+  /**
+   * A Camila propôs um horário concreto E o paciente aceitou DEPOIS disso.
+   * Separado do `horarioProposto` porque é a etapa 6 de verdade: propor não
+   * agenda ninguém, e é o aceite que libera o pagamento (`pagamento.ts`).
+   */
+  horarioAceito: boolean;
   pixEnviado: boolean;
   opcaoEscolhida: boolean;
   /** o ÚLTIMO anexo foi lido como comprovante (chave confere/inconclusiva ou análise indisponível) */
@@ -37,6 +43,14 @@ const DIA_HORA = new RegExp(`(?:${DIA}[^.!?]{0,40}?${HORA}|${HORA}[^.!?]{0,25}?$
 /** só conta como PROPOSTA se a Camila estiver oferecendo, não descrevendo o expediente */
 const OFERTA = /livre|dispon[íi]vel|reserv|encaix|que tal|posso te (marcar|agendar)|consigo te|agendei|agendado|fica bom|te encaixo/i;
 const PIX = /chave\s+pix|pix\s*\(/i;
+/**
+ * Aceite do horário pelo paciente. Curto de propósito: quem aceita um horário no
+ * WhatsApp responde "pode ser", "combinado", "ok" — raramente repete a frase
+ * inteira. O que dá precisão não é a regex, é a ORDEM: só conta se vier DEPOIS de
+ * uma proposta concreta da Camila.
+ */
+const ACEITE =
+  /\b(pode ser|pode marcar|pode reservar|pode agendar|isso mesmo|esse mesmo|perfeito|fechado|confirmo|combinado|topo|aceito|t[áa] (bom|certo)|ok|beleza|vamos)\b/i;
 /** escolha DECIDIDA (não "tem pacote?" nem "qual a diferença de avulsa pra pacote?") */
 const OPCAO_DECIDIDA =
   /\b(quero|prefiro|vou (?:de|querer|ficar com)|fico com|escolho|pode ser|melhor)\b[^.!?]{0,30}\b(avulsa|pacote|quinzenal)\b|\b(avulsa|pacote|quinzenal)\b[^.!?]{0,20}\b(mesmo|ent[ãa]o|por favor)\b/i;
@@ -108,6 +122,24 @@ function modalidadeDita(hist: MensagemHistorico[]): 'individual' | 'casal' | nul
   return null;
 }
 
+/**
+ * Houve proposta concreta de horário e, DEPOIS dela, um aceite do paciente?
+ *
+ * A ordem é a substância da função. Um "pode ser" solto no começo da conversa
+ * (respondendo "prefere individual ou casal?", por exemplo) não agenda nada — e
+ * tratá-lo como aceite liberaria justamente o pagamento adiantado que o
+ * `pagamento.ts` existe para impedir.
+ */
+function horarioFoiAceito(hist: MensagemHistorico[]): boolean {
+  const propostaEm = hist.findIndex(
+    (m) => m.role === 'assistant' && DIA_HORA.test(m.content) && OFERTA.test(m.content),
+  );
+  if (propostaEm < 0) return false;
+  return hist
+    .slice(propostaEm + 1)
+    .some((m) => m.role === 'user' && (ACEITE.test(m.content) || DIA_HORA.test(m.content)));
+}
+
 export function extrairSinais(hist: MensagemHistorico[]): SinaisRetomada {
   const n = hist.length;
   const ultima = hist[n - 1]?.at;
@@ -125,6 +157,7 @@ export function extrairSinais(hist: MensagemHistorico[]): SinaisRetomada {
     horarioProposto: hist.some(
       (m) => m.role === 'assistant' && DIA_HORA.test(m.content) && OFERTA.test(m.content),
     ),
+    horarioAceito: horarioFoiAceito(hist),
     pixEnviado: algum(hist, 'assistant', PIX),
     opcaoEscolhida: algum(hist, 'user', OPCAO_DECIDIDA),
     comprovanteOk: anexo === 'comprovante',

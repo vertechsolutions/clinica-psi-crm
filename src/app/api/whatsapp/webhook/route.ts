@@ -231,10 +231,28 @@ export async function POST(req: Request): Promise<Response> {
         return;
       }
 
-      // Handoff: se a conversa já foi pausada (form enviado), a IA fica muda pra
-      // esse número. A equipe humana é quem assume daqui em diante. Ainda
-      // gravamos a mensagem entrante pro histórico (útil pra Bruna revisar).
-      const paused = await isPaused(from);
+      // Handoff: a conversa foi pausada (form enviado, suspeita de bot, ou a
+      // Bruna assumiu pelo celular). A IA fica muda nesse número.
+      //
+      // Este gate vem ANTES do extractText e do markReadAndType, e a ordem é a
+      // correção pedida em 11/08/2026. Duas coisas quebravam depois dele:
+      //   · `markReadAndType` marcava a mensagem como lida mesmo com a conversa
+      //     pausada, destruindo o badge de não-lida no celular da Bruna — que é
+      //     a rede de segurança inteira do atendimento humano (mesmo raciocínio
+      //     do bloco de legado logo acima);
+      //   · `extractText` mandava áudio e imagem do paciente pro Gemini
+      //     (transcrição + análise de comprovante) num atendimento que já era de
+      //     gente: custo e dado de saúde processado sem contrapartida.
+      //
+      // O preço declarado: com a conversa pausada, áudio entra no histórico como
+      // `[audio]` em vez de transcrito. É a mesma troca já aceita no caminho do
+      // legado — o conteúdo continua no WhatsApp de quem está atendendo.
+      if (await isPaused(from)) {
+        const cru = msg.tipo === 'text' ? msg.texto?.trim() : null;
+        await recordUserMessage(from, cru || `[${msg.tipoCru}]`, wamid);
+        console.log(`[webhook] conversa ${mascarar(from)} pausada — mensagem gravada, IA silenciosa.`);
+        return;
+      }
 
       const { texto, comprovante } = await extractText(msg);
 
@@ -243,7 +261,6 @@ export async function POST(req: Request): Promise<Response> {
         const isNew = await recordUserMessage(from, `[${msg.tipoCru}]`, wamid);
         if (!isNew) return;
         await markReadAndType(msg);
-        if (paused) return; // pausada: nem pede texto, deixa quieto
         const fallback = msg.tipo === 'audio' ? PEDE_TEXTO : PEDE_TEXTO_OUTRAS_MIDIAS;
         const id = await sendText(from, semEmoji(fallback));
         if (id) await registrarEnvios([id]);
@@ -252,13 +269,6 @@ export async function POST(req: Request): Promise<Response> {
 
       const isNew = await recordUserMessage(from, texto, wamid);
       if (!isNew) return; // reentrega do provider: já processada
-
-      if (paused) {
-        // grava a mensagem entrante mas NÃO responde — silêncio da IA é o
-        // combinado. Loga pra Bruna ver que teve resposta do paciente.
-        console.log(`[webhook] conversa ${mascarar(from)} pausada — mensagem gravada, IA silenciosa.`);
-        return;
-      }
 
       // Fica POR MENSAGEM de propósito. Na Z-API isto só marca lida (o
       // "digitando" viaja no `delayTyping` do envio) e na Meta o indicador expira

@@ -46,7 +46,7 @@ async function main() {
   const { initSchema } = await import('../src/lib/schema');
   const { deletePatientData } = await import('../src/lib/maintenance');
   const conv = await import('../src/lib/conversation');
-  const { claimTurno, releaseTurno, aindaTitular, TURNO_TTL_SEGUNDOS } = await import(
+  const { claimTurno, releaseTurno, aindaTitular, podeFalar, TURNO_TTL_SEGUNDOS } = await import(
     '../src/lib/turno-claim'
   );
 
@@ -197,6 +197,40 @@ async function main() {
   assert.strictEqual(fantasma[0].pausada, false, 'não nasce calada');
   assert.strictEqual(fantasma[0].pronto, false, 'não nasce pronta');
   await releaseTurno(WA_NOVO, tokenF!);
+
+  // ── a Bruna assume o chat DURANTE o turno (print de 11/08/2026) ───────────
+  // O claim continua válido — ninguém disputou o número. O que mudou foi a
+  // conversa deixar de ser da IA. `aindaTitular` diz "sim" e é por isso que ele
+  // sozinho não bastava: quem responde a pergunta certa é o `podeFalar`.
+  await deletePatientData(WA_EXISTENTE);
+  const tokenH = await claimTurno(WA_EXISTENTE);
+  assert.ok(tokenH, 'pegou o claim pra simular o handoff');
+  assert.strictEqual(await podeFalar(WA_EXISTENTE, tokenH!), 'ok', 'com a conversa ativa, o titular fala');
+
+  await conv.pauseConversation(WA_EXISTENTE);
+  assert.strictEqual(
+    await aindaTitular(WA_EXISTENTE, tokenH!),
+    true,
+    'a pausa NÃO tira a titularidade — é exatamente por isso que o aindaTitular deixava passar',
+  );
+  assert.strictEqual(
+    await podeFalar(WA_EXISTENTE, tokenH!),
+    'pausada',
+    'a equipe assumiu durante o turno: nenhuma bolha sai (o print de 11/08/2026)',
+  );
+
+  await conv.resumeConversation(WA_EXISTENTE);
+  assert.strictEqual(
+    await podeFalar(WA_EXISTENTE, tokenH!),
+    'ok',
+    'devolvida pra IA, o mesmo turno volta a poder falar',
+  );
+  assert.strictEqual(
+    await podeFalar(WA_EXISTENTE, 'token-de-outro-turno'),
+    'sem-titularidade',
+    'e o portão novo continua barrando quem não é titular',
+  );
+  await releaseTurno(WA_EXISTENTE, tokenH!);
 
   // ── o TTL é teto de segurança, e o retry do turno é calibrado contra ele ───
   assert.ok(TURNO_TTL_SEGUNDOS > 0 && TURNO_TTL_SEGUNDOS <= 300, 'TTL num intervalo sensato');

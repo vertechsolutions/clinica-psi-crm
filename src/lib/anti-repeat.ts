@@ -3,34 +3,14 @@
 // camada de código garante que a resposta nunca sai igual à anterior.
 
 import { runTriagem, type TriagemInput, type TriagemResult } from './triagem';
-import { terminaSemAvancar } from './conducao';
+import { perguntasDe, repetePergunta, terminaSemAvancar } from './conducao';
+import { tentaCobrar } from './pagamento';
+import { normalizaComparacao, similaridade } from './texto';
 
-/** Normaliza pra comparação: minúsculas, sem pontuação, espaços colapsados. */
-export function normalizaComparacao(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[.,!?;:…"'“”‘’()\[\]{}*_~\-—–/\\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** Similaridade Dice entre multiconjuntos de palavras (0..1). */
-export function similaridade(a: string, b: string): number {
-  const ta = normalizaComparacao(a).split(' ').filter(Boolean);
-  const tb = normalizaComparacao(b).split(' ').filter(Boolean);
-  if (ta.length === 0 || tb.length === 0) return 0;
-  const conta = new Map<string, number>();
-  for (const t of ta) conta.set(t, (conta.get(t) ?? 0) + 1);
-  let comum = 0;
-  for (const t of tb) {
-    const c = conta.get(t) ?? 0;
-    if (c > 0) {
-      comum++;
-      conta.set(t, c - 1);
-    }
-  }
-  return (2 * comum) / (ta.length + tb.length);
-}
+// Moraram aqui até 11/08/2026; foram pro `texto.ts` porque o `conducao` passou a
+// precisar delas e este arquivo já importa o `conducao` (o ciclo fecharia).
+// Reexportadas para não quebrar quem já as importava daqui.
+export { normalizaComparacao, similaridade };
 
 /** Acima disso, a resposta nova é considerada repetição da anterior. */
 const LIMIAR_REPETICAO = 0.9;
@@ -60,32 +40,101 @@ const AVISO_AVANCAR = `
 Nunca encerre no acolhimento nem pare esperando o paciente dizer "ok".`;
 
 /**
- * runTriagem com duas travas determinísticas numa passada só (máx 2 chamadas ao
- * Gemini): se a resposta (a) sair igual/quase à última mensagem da assistente OU
- * (b) não puxar o próximo passo do funil (e não for handoff/fechamento), refaz
- * UMA vez com o(s) aviso(s) certo(s). Loga se persistir. Nunca entra em loop.
+ * Quantas falas recentes da Camila entram no inventário de perguntas já feitas.
+ *
+ * 3 e não 1: a CTA reclamada pela Bruna reaparecia de dois em dois turnos, e uma
+ * janela de 1 deixaria passar o padrão alternado. Mais que 3 começaria a proibir
+ * a retomada legítima de uma etapa que o paciente nunca respondeu.
  */
-export async function runTriagemGuardada(input: TriagemInput): Promise<TriagemResult> {
+const JANELA_PERGUNTAS = 3;
+
+const AVISO_PERGUNTA_REPETIDA = `
+
+[AVISO DO SISTEMA — só neste turno]: a pergunta com que você terminou é a MESMA que você já fez nos turnos anteriores. Repetir a mesma pergunta é o defeito nº 1 relatado pela clínica. Gere uma resposta NOVA que:
+- puxe OUTRA etapa pendente do funil (motivação, disponibilidade, propor um horário concreto, avulsa ou pacote), não a mesma de antes;
+- ou, se realmente não houver etapa nova, feche curto e SEM pergunta ("qualquer coisa é só me chamar").
+Se o paciente PEDIU uma informação de novo (chave Pix, valor, link), reenvie a informação normalmente — mude só a pergunta final.`;
+
+const AVISO_CEDO_DEMAIS = `
+
+[AVISO DO SISTEMA — só neste turno]: você tentou mandar os dados do Pix ou pedir o comprovante, mas AINDA NÃO existe um horário concreto que o paciente tenha aceitado. Isso é proibido: o pagamento é o PENÚLTIMO passo do funil (etapa 8), nunca o segundo, e mandar a chave antes de agendar é a reclamação nº 1 da clínica. Gere uma resposta NOVA que:
+- reconheça a escolha do paciente, se ele escolheu avulsa ou pacote ("perfeito, fica o pacote mensal então") — sem valor de Pix e sem pedir comprovante;
+- e puxe a etapa que falta: o que a trouxe à terapia (4), a disponibilidade de dias e horários (5), ou uma proposta de horário concreto da agenda (6).
+Escolher avulsa ou pacote NÃO libera o pagamento. Só o horário aceito libera.`;
+
+/**
+ * runTriagem com três travas determinísticas numa passada só (máx 2 chamadas ao
+ * Gemini): se a resposta (a) sair igual/quase à última mensagem da assistente,
+ * (b) não puxar o próximo passo do funil (e não for handoff/fechamento) ou
+ * (c) terminar reciclando uma pergunta já feita, refaz UMA vez com o(s) aviso(s)
+ * certo(s). Loga se persistir. Nunca entra em loop.
+ *
+ * Nenhuma das três bloqueia envio: o pior desfecho é a segunda tentativa sair
+ * igual à primeira e ser enviada com um `console.error`. É essa a assimetria que
+ * permite ser agressivo nos limiares.
+ */
+/**
+ * O que o turno sabe sobre o funil e que o guard não consegue deduzir do texto.
+ * Opcional em `runTriagemGuardada` para que a tela de teste (`/api/chat`) e os
+ * harnesses sigam compilando sem mudança.
+ */
+export interface GuardasDoTurno {
+  /** já existe horário concreto ACEITO pelo paciente (ou ele pediu o Pix) */
+  pagamentoLiberado: boolean;
+  /** a chave/dados que o modelo copiaria do prompt, pra reconhecer a cobrança */
+  pixInfo: string;
+}
+
+/** O resultado da triagem mais o veredito do portão de pagamento. */
+export type TriagemGuardada = TriagemResult & {
+  /** a segunda tentativa AINDA tentou cobrar: quem chama troca o texto */
+  cobrouCedo?: boolean;
+};
+
+export async function runTriagemGuardada(
+  input: TriagemInput,
+  guardas?: GuardasDoTurno,
+): Promise<TriagemGuardada> {
   const anterior = [...input.messages].reverse().find((m) => m.role === 'assistant')?.content;
+  // Inventário do que já foi perguntado, das últimas falas da Camila.
+  const perguntasAnteriores = input.messages
+    .filter((m) => m.role === 'assistant')
+    .slice(-JANELA_PERGUNTAS)
+    .flatMap((m) => perguntasDe(m.content));
+  const cobrouCedo = (r: TriagemResult) =>
+    Boolean(guardas) &&
+    !guardas!.pagamentoLiberado &&
+    !r.enviarForm &&
+    tentaCobrar(r.resposta, guardas!.pixInfo);
   const primeira = await runTriagem(input);
 
   const repetiu = ehRepeticao(primeira.resposta, anterior);
   // só cobra avanço no meio do funil: nunca no handoff (enviarForm)
-  const parou = !primeira.enviarForm && terminaSemAvancar(primeira.resposta);
-  if (!repetiu && !parou) return primeira;
+  const parou = !primeira.enviarForm && terminaSemAvancar(primeira.resposta, perguntasAnteriores);
+  const cedo = cobrouCedo(primeira);
+  if (!repetiu && !parou && !cedo) return primeira;
 
   let aviso = '';
   if (repetiu) aviso += AVISO_RETRY;
-  if (parou) aviso += AVISO_AVANCAR;
-  console.warn(`[guard] refazendo (repetiu=${repetiu}, parou=${parou})`);
+  if (parou) {
+    // Distingue "não puxou nada" de "puxou a mesma coisa": o aviso genérico de
+    // avanço mandaria terminar com pergunta, que é exatamente o que o modelo
+    // acabou de fazer — e ele repetiria a CTA de novo.
+    aviso += repetePergunta(primeira.resposta, perguntasAnteriores) ? AVISO_PERGUNTA_REPETIDA : AVISO_AVANCAR;
+  }
+  if (cedo) aviso += AVISO_CEDO_DEMAIS;
+  console.warn(`[guard] refazendo (repetiu=${repetiu}, parou=${parou}, cedo=${cedo})`);
   const segunda = await runTriagem({ ...input, system: input.system + aviso });
   if (ehRepeticao(segunda.resposta, anterior)) {
     console.error('[guard] repetição persistiu após retry — enviando a 2ª tentativa mesmo assim');
   }
-  if (!segunda.enviarForm && terminaSemAvancar(segunda.resposta)) {
+  if (!segunda.enviarForm && terminaSemAvancar(segunda.resposta, perguntasAnteriores)) {
     console.error('[guard] resposta ainda não avança após retry — enviando mesmo assim');
   }
-  return segunda;
+  // Cobrança que insistiu depois do aviso é o único caso em que o texto do
+  // modelo é DESCARTADO em vez de só regerado — quem chama troca a resposta pelo
+  // texto da clínica. Mesmo idioma do backstop de comprovante em `turno.ts`.
+  return { ...segunda, cobrouCedo: cobrouCedo(segunda) };
 }
 
 /** Compat: nome antigo usado pela route, webhook e harness de testes. */
